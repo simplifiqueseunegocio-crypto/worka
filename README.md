@@ -1,4 +1,4 @@
-# Plataforma MCONT
+# Plataforma Worka
 
 Gestão interna do escritório: clientes, obrigações mensais e prazos.
 Veja o escopo em [ESCOPO.md](ESCOPO.md).
