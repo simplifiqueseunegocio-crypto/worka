@@ -1,0 +1,13 @@
+# Configuração da sincronização Domínio -> Plataforma MCONT.
+# Copie para "sincronizar.config" (na mesma pasta) e preencha.
+# NÃO versione o sincronizar.config: ele tem senha e token.
+
+# Conexão ODBC do Domínio (Fontes de Dados ODBC 32 bits)
+ODBC_DSN=Contabil
+DOMINIO_USUARIO=
+DOMINIO_SENHA=
+
+# Endereço da plataforma publicada (sem barra no final), ex.: https://plataforma-mcont.vercel.app
+API_URL=
+# Mesmo valor de DOMINIO_API_TOKEN configurado na Vercel
+DOMINIO_API_TOKEN=

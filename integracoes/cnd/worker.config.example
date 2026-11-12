@@ -1,0 +1,8 @@
+# Configuração do fila.mjs (fila de CND da Plataforma MCONT).
+# Copie para "worker.config" (na mesma pasta) e preencha.
+# NÃO versione o worker.config: ele tem o token.
+
+# Endereço da plataforma publicada (sem barra no final), ex.: https://plataforma-mcont.vercel.app
+API_URL=
+# Mesmo valor de CND_WORKER_TOKEN configurado na Vercel
+CND_WORKER_TOKEN=

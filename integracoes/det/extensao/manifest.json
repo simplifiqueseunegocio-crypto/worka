@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Robô do DET · MCONT",
+  "version": "1.0.0",
+  "description": "Lê a lista da Caixa Postal do DET das empresas na fila da Plataforma MCONT, na guia em que você já entrou. Nunca abre mensagens.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://det.sit.trabalho.gov.br/*",
+    "https://*.vercel.app/*",
+    "https://*.mcont.com.br/*",
+    "http://localhost:3000/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://det.sit.trabalho.gov.br/*"],
+      "js": ["det-caixa-postal.js", "painel.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

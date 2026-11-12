@@ -1,0 +1,398 @@
+/* Procura classes só em src/. Sem isso o Tailwind varre o projeto inteiro,
+   inclusive integracoes/dominio/sincronizar.config, que é restrito a
+   administradores e derruba o servidor de desenvolvimento com "Acesso negado". */
+@import "tailwindcss" source("..");
+
+/* Tema escuro por classe no <html> (definida antes da pintura em app/layout.tsx).
+   Os tokens abaixo já trocam sozinhos; use dark: só para exceções pontuais. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================================
+   Worka — tokens semânticos (paleta "Rustic Charm").
+   Os componentes usam SÓ estes nomes (bg-superficie, text-texto-suave,
+   bg-primaria...). Para mudar uma cor, mude aqui; o tema escuro redefine os
+   mesmos nomes em :root.dark, mais abaixo.
+
+   Paleta base: Creme #FAF8EF · Areia #CBC5BB · Grafite #403D3A
+                Carvão #242322 · Laranja #EF5928
+   ========================================================================== */
+@theme {
+  /* Superfícies */
+  --color-fundo: #faf8ef;            /* Creme: fundo da aplicação */
+  --color-superficie: #ffffff;       /* cartões, modais, campos */
+  --color-suave: #f3f0e6;            /* blocos neutros, hover de linhas, chips */
+  --color-lateral: #f4f1e8;          /* barra lateral */
+  --color-areia: #cbc5bb;            /* Areia: bordas fortes, séries neutras de gráfico */
+  --color-borda: #e8e4dc;            /* bordas e divisórias */
+  --color-escuro: #242322;           /* Carvão: cartões de destaque, tooltips */
+  --color-escuro-elevado: #403d3a;   /* Grafite: realce sobre o escuro */
+
+  /* Texto */
+  --color-texto: #242322;            /* Carvão */
+  --color-texto-suave: #6f6963;      /* AA (≥ 4.5:1) sobre creme, branco e suave */
+  --color-texto-inverso-suave: #cbc5bb; /* texto secundário sobre o escuro */
+
+  /* Marca */
+  --color-primaria: #ef5928;         /* Laranja Worka: ações, ativo, selecionado */
+  --color-primaria-hover: #e5531f;   /* mantém 4.5:1 com o texto carvão (#D94C20 daria 4.1:1) */
+  --color-primaria-suave: #fdebe3;   /* fundo de item selecionado / ícones de marca */
+  --color-sobre-primaria: #1c1b1a;   /* texto sobre o laranja: 4.6:1 (branco daria 3.4:1) */
+  --color-destaque: #b8411a;         /* laranja para TEXTO e ícones sobre claro: 5.2:1 */
+  --color-realce: #f5a383;           /* acento claro sobre o escuro (antigo dourado) */
+  --color-foco: #ef5928;
+
+  /* Status */
+  --color-sucesso: #17603f;
+  --color-sucesso-suave: #e1f2e6;
+  --color-sucesso-suave-hover: #c9e8d4;
+  --color-sucesso-forte: #17603f;
+  --color-sucesso-forte-hover: #0f4a30;
+  --color-sucesso-ponto: #2e9b6a;
+  --color-alerta: #8a5300;
+  --color-alerta-suave: #fbefd6;
+  --color-alerta-borda: #d99a4e;
+  --color-alerta-ponto: #e0a040;
+  --color-perigo: #a4231a;
+  --color-perigo-suave: #fde4e1;
+  --color-perigo-borda: #f2b8b0;
+  --color-perigo-forte: #b3261e;
+  --color-perigo-forte-hover: #8f1d16;
+  --color-perigo-inverso: #ffd9d4;
+  --color-info: #1f5a96;
+  --color-info-suave: #e3edf8;
+
+  /* Categorias (identidade das automações) */
+  --color-violeta: #5b3fa8;
+  --color-violeta-suave: #ece7f8;
+  --color-petroleo: #0f6e6e;
+  --color-petroleo-suave: #ddf1f0;
+  --color-rosa: #a3326b;
+  --color-rosa-suave: #f8e3ee;
+
+  /* Tipografia: Inter na interface; Sora SemiBold na marca e nos títulos. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sora), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Raios e sombras */
+  --radius-card: 14px;
+  --radius-bloco: 10px;
+  --shadow-elevado: 0 1px 2px rgb(36 35 34 / 0.04), 0 8px 24px -12px rgb(36 35 34 / 0.14);
+  --shadow-modal: 0 24px 64px -16px rgb(36 35 34 / 0.32);
+
+  --animate-crescer: crescer 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-surgir: surgir 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+
+  @keyframes crescer {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  @keyframes crescerY {
+    from { transform: scaleY(0); }
+    to { transform: scaleY(1); }
+  }
+  @keyframes surgir {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* Tema escuro: Carvão no fundo, Grafite nas superfícies, laranja de destaque. */
+/* .tema-escuro: aplica a paleta escura só a um trecho (ex.: a barra lateral,
+   que fica sempre escura, mesmo no tema claro). */
+:root.dark,
+.tema-escuro {
+  --color-fundo: #242322;
+  --color-superficie: #2e2c2a;
+  --color-suave: #383532;
+  --color-lateral: #1e1d1c;
+  --color-areia: #6b6660;
+  --color-borda: #403d3a;
+  --color-escuro: #403d3a;
+  --color-escuro-elevado: #524e4a;
+
+  --color-texto: #f3f0e7;
+  --color-texto-suave: #b3ada4;
+  --color-texto-inverso-suave: #cbc5bb;
+
+  --color-primaria: #ef5928;
+  --color-primaria-hover: #f26f43;
+  --color-primaria-suave: #4a2c20;
+  --color-sobre-primaria: #1c1b1a;
+  --color-destaque: #f6875f;
+  --color-realce: #f5a383;
+  --color-foco: #f6875f;
+
+  --color-sucesso: #7fd3a8;
+  --color-sucesso-suave: #21392c;
+  --color-sucesso-suave-hover: #2a4837;
+  --color-sucesso-forte: #1f7a52;
+  --color-sucesso-forte-hover: #186141;
+  --color-sucesso-ponto: #3db07c;
+  --color-alerta: #f0bd6a;
+  --color-alerta-suave: #403320;
+  --color-alerta-borda: #8a6430;
+  --color-alerta-ponto: #e8ae55;
+  --color-perigo: #f59a8e;
+  --color-perigo-suave: #472622;
+  --color-perigo-borda: #7a3a31;
+  --color-perigo-forte: #c9382b;
+  --color-perigo-forte-hover: #a82d22;
+  --color-perigo-inverso: #ffd9d4;
+  --color-info: #93bdec;
+  --color-info-suave: #23303f;
+
+  --color-violeta: #bba8ee;
+  --color-violeta-suave: #332b47;
+  --color-petroleo: #7fd0cb;
+  --color-petroleo-suave: #1d3937;
+  --color-rosa: #eb9ac2;
+  --color-rosa-suave: #45273a;
+
+  --shadow-elevado: 0 1px 2px rgb(0 0 0 / 0.2), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --shadow-modal: 0 24px 64px -16px rgb(0 0 0 / 0.6);
+
+  color-scheme: dark;
+}
+
+/* Base de 15px (padrão do navegador é 16px). Como o Tailwind usa rem,
+   textos, espaçamentos e ícones acompanham proporcionalmente. */
+html {
+  font-size: 93.75%;
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-fundo);
+  color: var(--color-texto);
+  font-feature-settings: "cv11", "ss01";
+}
+
+@layer base {
+  /* Títulos de marca (Sora SemiBold): peso e espaçamento padrão, para
+     font-display bastar sozinho; utilitários (font-bold...) ainda vencem. */
+  .font-display {
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-primaria) 28%, transparent);
+  }
+
+  /* Foco visível e consistente para quem navega pelo teclado. Campos que já
+     desenham o próprio anel (focus:ring-*) continuam com o deles. */
+  :where(a, button, [role="button"], [tabindex], summary, input[type="checkbox"], input[type="radio"]):focus-visible {
+    outline: 2px solid var(--color-foco);
+    outline-offset: 2px;
+  }
+
+  /* Campos de formulário: placeholder e controles nativos no tom do tema. */
+  ::placeholder {
+    color: color-mix(in oklab, var(--color-texto-suave) 80%, transparent);
+  }
+  :where(input, select, textarea) {
+    accent-color: var(--color-primaria);
+  }
+  :where(select) {
+    background-color: var(--color-superficie);
+    color: var(--color-texto);
+  }
+}
+
+/* ==========================================================================
+   Entrada em cascata: filhos diretos de .entrada surgem um após o outro.
+   ========================================================================== */
+.entrada > * {
+  animation: surgir 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.entrada > :nth-child(2) { animation-delay: 50ms; }
+.entrada > :nth-child(3) { animation-delay: 100ms; }
+.entrada > :nth-child(4) { animation-delay: 150ms; }
+.entrada > :nth-child(5) { animation-delay: 200ms; }
+.entrada > :nth-child(6) { animation-delay: 250ms; }
+.entrada > :nth-child(n + 7) { animation-delay: 300ms; }
+
+/* ==========================================================================
+   Esqueletos de carregamento: só aparecem se a espera passar de ~300 ms,
+   para consultas rápidas não piscarem um bloco cinza na tela.
+   ========================================================================== */
+.esqueleto-atrasado {
+  animation: aparecer 200ms ease-out 300ms both;
+}
+@keyframes aparecer {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.brilho {
+  position: relative;
+  overflow: hidden;
+}
+.brilho::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-suave) 85%, transparent), transparent);
+  animation: brilho 1.4s ease-in-out infinite;
+}
+@keyframes brilho {
+  to { transform: translateX(100%); }
+}
+
+/* ==========================================================================
+   View transitions (React <ViewTransition>, ativadas nas navegações).
+   ========================================================================== */
+::view-transition {
+  pointer-events: none;
+}
+/* Sem crossfade da tela inteira: só o que tem nome/classe anima. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+
+/* Menu lateral e barra do celular ficam parados como referência. */
+::view-transition-group(menu-lateral),
+::view-transition-group(barra-movel) {
+  animation: none;
+  z-index: 50;
+}
+::view-transition-old(menu-lateral),
+::view-transition-old(barra-movel) {
+  display: none;
+}
+::view-transition-new(menu-lateral),
+::view-transition-new(barra-movel) {
+  animation: none;
+}
+
+/* Destaque do item ativo do menu desliza até o novo item. */
+::view-transition-group(indicador-menu) {
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 60;
+}
+
+/* Troca de módulo: o antigo sai rápido, o novo entra subindo. */
+::view-transition-old(.pagina-sai) {
+  animation: 140ms ease-in both vt-sumir;
+}
+::view-transition-new(.pagina-entra) {
+  animation:
+    240ms ease-out 120ms both vt-surgir,
+    420ms cubic-bezier(0.22, 1, 0.36, 1) both vt-subir;
+}
+
+/* Carregamento: esqueleto desce e some; conteúdo sobe e aparece. */
+::view-transition-old(.esconde) {
+  animation: 140ms ease-out both vt-sumir, 140ms ease-out both vt-descer;
+}
+::view-transition-new(.revela) {
+  animation:
+    220ms ease-in 120ms both vt-surgir,
+    380ms cubic-bezier(0.22, 1, 0.36, 1) both vt-subir;
+}
+
+@keyframes vt-surgir {
+  from { opacity: 0; filter: blur(3px); }
+  to { opacity: 1; filter: blur(0); }
+}
+@keyframes vt-sumir {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes vt-subir {
+  from { transform: translateY(14px); }
+  to { transform: translateY(0); }
+}
+@keyframes vt-descer {
+  from { transform: translateY(0); }
+  to { transform: translateY(10px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    transition-duration: 1ms !important;
+  }
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+  }
+}
+
+/* ==========================================================================
+   Rolagem discreta (barra lateral): trilho invisível e
+   alça fina em pílula, que só aparece ao passar o mouse ou rolar com teclado.
+   ========================================================================== */
+.rolagem-discreta::-webkit-scrollbar {
+  width: 6px;
+}
+.rolagem-discreta::-webkit-scrollbar-track {
+  background: transparent;
+}
+.rolagem-discreta::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+.rolagem-discreta:hover::-webkit-scrollbar-thumb,
+.rolagem-discreta:focus-within::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--color-primaria) 40%, transparent);
+}
+.rolagem-discreta::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primaria);
+}
+.rolagem-discreta::-webkit-scrollbar-button {
+  display: none;
+}
+/* Firefox não tem ::-webkit-scrollbar; usa as propriedades padrão. */
+@supports not selector(::-webkit-scrollbar) {
+  .rolagem-discreta {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .rolagem-discreta:hover,
+  .rolagem-discreta:focus-within {
+    scrollbar-color: color-mix(in oklab, var(--color-primaria) 40%, transparent) transparent;
+  }
+}
+
+/* ==========================================================================
+   Barra de rolagem global: fina, sem trilho e sem setas, alça em pílula
+   laranja translúcida que ganha força ao passar o mouse.
+   ========================================================================== */
+:root {
+  --rolagem-alca: color-mix(in oklab, var(--color-primaria) 45%, transparent);
+  --rolagem-alca-hover: var(--color-primaria);
+}
+:not(.rolagem-discreta)::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+:not(.rolagem-discreta)::-webkit-scrollbar-track,
+:not(.rolagem-discreta)::-webkit-scrollbar-corner {
+  background: transparent;
+}
+:not(.rolagem-discreta)::-webkit-scrollbar-thumb {
+  background: var(--rolagem-alca);
+  border-radius: 999px;
+  /* Borda transparente afina a alça visualmente sem estreitar a área de clique. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+:not(.rolagem-discreta)::-webkit-scrollbar-thumb:hover {
+  background: var(--rolagem-alca-hover);
+  background-clip: padding-box;
+}
+:not(.rolagem-discreta)::-webkit-scrollbar-button {
+  display: none;
+}
+@supports not selector(::-webkit-scrollbar) {
+  :root {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rolagem-alca) transparent;
+  }
+}

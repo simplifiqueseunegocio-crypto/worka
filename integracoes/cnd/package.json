@@ -1,0 +1,13 @@
+{
+  "name": "robo-cnd",
+  "private": true,
+  "type": "module",
+  "description": "Robô da CND municipal SIA (Fiorilli) da Plataforma MCONT, no servidor do escritório.",
+  "scripts": {
+    "instalar-navegador": "set PLAYWRIGHT_BROWSERS_PATH=0&& playwright install chromium-headless-shell",
+    "robo-sia": "node robo-sia.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.64.1"
+  }
+}

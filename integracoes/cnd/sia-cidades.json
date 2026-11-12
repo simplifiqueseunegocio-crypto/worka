@@ -1,0 +1,10 @@
+[
+  { "uf": "SP", "municipio": "JACI", "url": "http://200.95.195.126:5661/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "BADY BASSITT", "url": "http://200.95.223.250:5661/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "NOVA ALIANCA", "url": "http://200.95.195.94:8081/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "SALES", "url": "https://servicos.sales.sp.gov.br/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "IRAPUA", "url": "http://170.0.49.34:8080/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "MERIDIANO", "url": "https://sia.meridiano.sp.gov.br/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "GUARARAPES", "url": "http://138.97.36.146:5657/servicosweb/home.jsf" },
+  { "uf": "SP", "municipio": "POTIRENDABA", "url": "https://servicosonline.potirendaba.sp.gov.br:5661/servicosweb/home.jsf" }
+]
