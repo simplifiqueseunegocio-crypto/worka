@@ -1,6 +1,6 @@
 /* Procura classes só em src/. Sem isso o Tailwind varre o projeto inteiro,
-   inclusive integracoes/dominio/sincronizar.config, que é restrito a
-   administradores e derruba o servidor de desenvolvimento com "Acesso negado". */
+   inclusive configurações locais restritas das integrações (integracoes/), que
+   derrubavam o servidor de desenvolvimento com "Acesso negado". */
 @import "tailwindcss" source("..");
 
 /* Tema escuro por classe no <html> (definida antes da pintura em app/layout.tsx).

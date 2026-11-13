@@ -2,9 +2,9 @@ import "server-only";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Token Bearer das integrações (DOMINIO_API_TOKEN, CND_WORKER_TOKEN), comparado
+// Token Bearer das integrações (CRON_SECRET, CND_WORKER_TOKEN, DET_ROBO_TOKEN), comparado
 // por hash para o tempo não depender do tamanho nem do conteúdo.
-export function tokenValido(request: Request, variavel = "DOMINIO_API_TOKEN") {
+export function tokenValido(request: Request, variavel: string) {
   const esperado = process.env[variavel];
   const recebido = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!esperado || !recebido) return false;
@@ -18,7 +18,7 @@ export function origemDaRequisicao(request: Request) {
 }
 
 export type Execucao = {
-  integracao?: string; // padrão da tabela: dominio_clientes
+  integracao?: string; // ex.: conta_azul_clientes (padrão da tabela: dominio_clientes, histórico)
   status: "sucesso" | "recusado" | "erro";
   origem: string;
   iniciadoEm: Date;

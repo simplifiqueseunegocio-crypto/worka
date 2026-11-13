@@ -14,6 +14,7 @@ import {
   resumoDias,
   type DiaLog,
   type ExecucaoLog,
+  type ItemLog,
   type StatusExecucao,
 } from "@/lib/log-sincronizacao";
 
@@ -31,7 +32,7 @@ export default function LogSincronizacao({ searchParams }: PageProps<"/configura
         </Link>
         <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold tracking-[0.2em] text-texto-suave">INTEGRAÇÃO DOMÍNIO</p>
+            <p className="text-xs font-semibold tracking-[0.2em] text-texto-suave">INTEGRAÇÃO CONTA AZUL</p>
             <h1 className="mt-3 font-display text-3xl leading-[1.1] text-texto sm:text-[2.5rem]">Log de sincronização</h1>
           </div>
           <p className="flex items-center gap-2 rounded-full bg-superficie px-4 py-2 text-xs font-medium text-texto-suave ring-1 ring-borda">
@@ -113,12 +114,14 @@ async function Conteudo({ searchParams }: { searchParams: PageProps<"/configurac
   }
   const [dias, { execucoes, total }, ultima] = dados;
 
-  const codigos = execucoes.flatMap((e) => [
-    ...(e.detalhes?.inseridos ?? []),
-    ...(e.detalhes?.reativados ?? []),
-    ...(e.detalhes?.suspensos ?? []),
-    ...(e.detalhes?.regimes ?? []).map((r) => r.codigo),
-  ]);
+  const codigos = execucoes
+    .flatMap((e) => [
+      ...(e.detalhes?.inseridos ?? []),
+      ...(e.detalhes?.reativados ?? []),
+      ...(e.detalhes?.suspensos ?? []),
+      ...(e.detalhes?.regimes ?? []).map((r) => r.codigo),
+    ])
+    .filter((c): c is number => typeof c === "number");
   const nomes = await nomesPorCodigo(codigos);
   const paginas = Math.max(1, Math.ceil(total / POR_PAGINA_LOG));
 
@@ -155,7 +158,7 @@ async function Conteudo({ searchParams }: { searchParams: PageProps<"/configurac
           <p className="mt-6 rounded-bloco bg-fundo px-6 py-12 text-center text-sm text-texto-suave">
             {status
               ? "Nenhuma execução com esse resultado."
-              : "Nenhuma sincronização registrada ainda. A primeira aparece depois da rotina das 23:00 ou de um envio manual."}
+              : "Nenhuma sincronização registrada ainda. A primeira aparece depois da rotina das 23:00 ou de um “Sincronizar agora” em Configurações → Conta Azul."}
           </p>
         ) : (
           <ul className="mt-5 flex flex-col gap-2">
@@ -194,7 +197,7 @@ function MigracaoPendente() {
         <p className="mt-1">
           Aplique no Supabase (SQL Editor) a migration{" "}
           <code className="rounded bg-suave px-1.5 py-0.5 text-texto">supabase/migrations/20261016000000_log_sincronizacao.sql</code>.
-          Depois disso, cada sincronização com o Domínio passa a aparecer aqui.
+          Depois disso, cada sincronização com a Conta Azul passa a aparecer aqui.
         </p>
       </div>
     </div>
@@ -250,7 +253,7 @@ function UltimaExecucao({ execucao }: { execucao: ExecucaoLog | null }) {
       <section className="rounded-card bg-escuro p-6 text-white">
         <h2 className="text-[11px] font-semibold tracking-[0.2em] text-texto-inverso-suave">ÚLTIMA EXECUÇÃO</h2>
         <p className="mt-4 font-display text-3xl">Ainda não houve.</p>
-        <p className="mt-2 text-sm text-texto-inverso-suave">Agende a rotina no servidor do Domínio (veja o README).</p>
+        <p className="mt-2 text-sm text-texto-inverso-suave">Conecte a Conta Azul em Configurações → Conta Azul e rode a primeira sincronização.</p>
       </section>
     );
   }
@@ -278,7 +281,7 @@ function UltimaExecucao({ execucao }: { execucao: ExecucaoLog | null }) {
       {horas >= 26 && (
         <p className="mt-4 flex items-center gap-2 rounded-bloco bg-white/10 px-3 py-2 text-sm text-realce">
           <AlertTriangle className="size-4 shrink-0" />
-          Nenhuma execução há {horas} horas. Verifique a rotina no servidor.
+          Nenhuma execução há {horas} horas. Verifique a conexão em Configurações → Conta Azul.
         </p>
       )}
     </section>
@@ -293,6 +296,8 @@ function ItemExecucao({ execucao: e, nomes }: { execucao: ExecucaoLog; nomes: Ma
     !!d.reativados?.length ||
     !!d.suspensos?.length ||
     !!d.regimes?.length ||
+    !!d.vinculados?.length ||
+    !!d.ignorados?.length ||
     !!d.erros?.length;
 
   const numero = (rotulo: string, valor: number | null, destaque?: string) => (
@@ -348,8 +353,14 @@ function ItemExecucao({ execucao: e, nomes }: { execucao: ExecucaoLog; nomes: Ma
           {d.erros?.length ? <ListaTexto titulo="Erros nos dados" itens={d.erros} /> : null}
           {d.inseridos?.length ? <ListaCodigos titulo="Clientes novos" codigos={d.inseridos} nomes={nomes} /> : null}
           {d.reativados?.length ? <ListaCodigos titulo="Reativados" codigos={d.reativados} nomes={nomes} /> : null}
+          {d.vinculados?.length ? (
+            <ListaTexto titulo={`Vinculados pelo CNPJ (${d.vinculados.length})`} itens={d.vinculados} />
+          ) : null}
           {d.suspensos?.length ? (
-            <ListaCodigos titulo="Suspensos (saíram do Domínio)" codigos={d.suspensos} nomes={nomes} />
+            <ListaCodigos titulo="Suspensos (saíram da integração)" codigos={d.suspensos} nomes={nomes} />
+          ) : null}
+          {d.ignorados?.length ? (
+            <ListaTexto titulo={`Ignorados: sem CPF/CNPJ válido (${d.ignorados.length})`} itens={d.ignorados} />
           ) : null}
           {d.regimes?.length ? (
             <ListaTexto
@@ -367,11 +378,12 @@ function ItemExecucao({ execucao: e, nomes }: { execucao: ExecucaoLog; nomes: Ma
 
 const LIMITE_LISTA = 50;
 
-function ListaCodigos({ titulo, codigos, nomes }: { titulo: string; codigos: number[]; nomes: Map<number, string> }) {
+// Códigos numéricos (Domínio, histórico) viram "Cód. 123 · Nome"; textos (Conta Azul) já vêm prontos.
+function ListaCodigos({ titulo, codigos, nomes }: { titulo: string; codigos: ItemLog[]; nomes: Map<number, string> }) {
   return (
     <ListaTexto
       titulo={`${titulo} (${codigos.length})`}
-      itens={codigos.map((c) => `Cód. ${c}${nomes.get(c) ? ` · ${nomes.get(c)}` : ""}`)}
+      itens={codigos.map((c) => (typeof c === "string" ? c : `Cód. ${c}${nomes.get(c) ? ` · ${nomes.get(c)}` : ""}`))}
     />
   );
 }

@@ -44,9 +44,6 @@ next-env.d.ts
 # gerado a partir de supabase/migrations para colar no SQL Editor
 /supabase/aplicar-*.sql
 
-# integração Domínio: configuração com senha/token e logs locais
-/integracoes/dominio/sincronizar.config
-/integracoes/dominio/logs/
 /.next-build/
 
 # fila de CND: configuração com token e logs locais

@@ -61,15 +61,15 @@ function ultimaCompetenciaGerada(agora = new Date()) {
 const mesAno = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 const plural = (n: number, um: string, varios: string) => `${n.toLocaleString("pt-BR")} ${n === 1 ? um : varios}`;
 
-async function sincronizacaoDominio(gestor: boolean): Promise<Rotina> {
+async function sincronizacaoContaAzul(gestor: boolean): Promise<Rotina> {
   const base = {
-    chave: "dominio",
-    titulo: "Sincronização com o Domínio",
+    chave: "conta-azul",
+    titulo: "Sincronização com a Conta Azul",
     descricao:
-      "Traz clientes novos, reativa e suspende empresas, atualiza o regime e apaga as tarefas em aberto de quem saiu do Domínio.",
+      "Traz os clientes ativos da Conta Azul: cadastra os novos, atualiza os dados, reativa e suspende, e apaga as tarefas em aberto de quem saiu.",
     agenda: "Todo dia às 23:00",
-    onde: "Servidor do escritório",
-    href: "/configuracoes/sincronizacao",
+    onde: "Plataforma (API Conta Azul)",
+    href: "/configuracoes/conta-azul",
     proxima: proximaDiaria(23),
   };
   if (!gestor) {
@@ -80,6 +80,7 @@ async function sincronizacaoDominio(gestor: boolean): Promise<Rotina> {
   const { data, error } = await supabase
     .from("integracao_execucoes")
     .select("iniciado_em, status, recebidas, inseridas, suspensas, mensagem")
+    .eq("integracao", "conta_azul_clientes")
     .order("iniciado_em", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -91,7 +92,7 @@ async function sincronizacaoDominio(gestor: boolean): Promise<Rotina> {
   const atrasada = horas >= 26;
   const resumo =
     data.status === "sucesso"
-      ? `${plural(data.recebidas ?? 0, "empresa recebida", "empresas recebidas")} · ${data.inseridas ?? 0} novas · ${data.suspensas ?? 0} suspensas`
+      ? `${plural(data.recebidas ?? 0, "cliente recebido", "clientes recebidos")} · ${data.inseridas ?? 0} novos · ${data.suspensas ?? 0} suspensos`
       : (data.mensagem ?? "A última execução falhou.");
   return {
     ...base,
@@ -720,7 +721,7 @@ export async function listarRotinas(gestor: boolean): Promise<Rotina[]> {
     cndVencendo(gestor),
     cobrancaCliente(gestor),
     conferenciaReceita(gestor),
-    sincronizacaoDominio(gestor),
+    sincronizacaoContaAzul(gestor),
     geracaoTarefas(),
     rodadaCnd(),
     consultasCnd(),

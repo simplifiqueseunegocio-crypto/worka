@@ -38,7 +38,7 @@ const acoes: Record<StatusCliente, { para: StatusCliente; rotulo: string }[]> = 
 const n = (v: number, um: string, varios: string) => `${v.toLocaleString("pt-BR")} ${v === 1 ? um : varios}`;
 
 // Situação do cliente na carteira: suspender, encerrar, reativar (admin e
-// gestor) e excluir (admin, fora de atividade e fora do Domínio).
+// gestor) e excluir (admin, fora de atividade e fora da integração).
 export function SituacaoCliente({
   clienteId,
   nome,
@@ -65,11 +65,11 @@ export function SituacaoCliente({
   const origem =
     status === "ativo"
       ? doDominio
-        ? "Atualizado todo dia pela sincronização do Domínio."
+        ? "Atualizado todo dia pela sincronização com a Conta Azul."
         : "Cadastrado na plataforma."
       : statusManual
-        ? "Definido pela equipe: a sincronização do Domínio não reativa."
-        : "Suspenso pela sincronização: saiu da lista de empresas ativas do Domínio.";
+        ? "Definido pela equipe: a sincronização com a Conta Azul não reativa."
+        : "Suspenso pela sincronização: saiu da lista de clientes ativos da Conta Azul.";
 
   return (
     <div className="mt-4">
@@ -164,9 +164,9 @@ function ConfirmarExclusao({ clienteId, nome, impacto: i }: { clienteId: string;
       <div className="mt-3 flex items-start gap-3 rounded-bloco bg-alerta-suave p-4 text-sm text-alerta">
         <AlertTriangle className="mt-0.5 size-4 shrink-0" />
         <span>
-          <strong className="font-semibold">Não dá para excluir:</strong> o cliente veio na última sincronização do
-          Domínio e seria criado de novo, sem o histórico. Mantenha suspenso ou encerrado, ou inative a empresa no
-          Domínio e exclua depois da próxima sincronização.
+          <strong className="font-semibold">Não dá para excluir:</strong> o cliente veio na última sincronização com a
+          Conta Azul e seria criado de novo, sem o histórico. Mantenha suspenso ou encerrado, ou inative o cliente na
+          Conta Azul e exclua depois da próxima sincronização.
         </span>
       </div>
     );

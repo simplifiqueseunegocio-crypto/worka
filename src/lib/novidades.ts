@@ -101,7 +101,7 @@ export const novidades: Versao[] = [
       { tipo: "novo", texto: "A situação do cliente (ativo, suspenso, encerrado) pode ser alterada pela tela." },
       {
         tipo: "melhoria",
-        texto: "Quando a empresa sai do Domínio, as tarefas que ainda estavam em aberto são apagadas. As concluídas ficam no histórico.",
+        texto: "Quando a empresa sai da integração, as tarefas que ainda estavam em aberto são apagadas. As concluídas ficam no histórico.",
       },
     ],
   },

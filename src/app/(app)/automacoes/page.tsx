@@ -124,7 +124,7 @@ const VISUAL: Record<string, Visual> = {
   "cnd-vencendo": { icone: CalendarClock, area: "E-mail", departamento: "Fiscal", tom: TONS.ambar },
   "cobranca-cliente": { icone: Send, area: "E-mail", departamento: "Geral", tom: TONS.rosa },
   "conferencia-receita": { icone: Landmark, area: "Receita", departamento: "Societário", tom: TONS.azul },
-  dominio: { icone: RefreshCw, area: "Integração", departamento: "Geral", tom: TONS.teal },
+  "conta-azul": { icone: RefreshCw, area: "Integração", departamento: "Geral", tom: TONS.teal },
   tarefas: { icone: ListChecks, area: "Tarefas", departamento: "Geral", tom: TONS.violeta },
   "cnd-rodada": { icone: ShieldCheck, area: "Certidões", departamento: "Fiscal", tom: TONS.verde },
   "cnd-consultas": { icone: FileSearch, area: "Certidões", departamento: "Fiscal", tom: TONS.verde },

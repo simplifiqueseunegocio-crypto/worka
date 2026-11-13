@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, CalendarDays, FileBadge, Mail, Megaphone, RefreshCw, ScrollText, ShieldCheck, Users } from "lucide-react";
+import { ArrowUpRight, CalendarDays, FileBadge, Link2, Mail, Megaphone, RefreshCw, ScrollText, ShieldCheck, Users } from "lucide-react";
 import { TransicaoPagina } from "@/components/ui/transicao";
 import { PontoNovidade } from "@/components/novidades/novidade-vista";
 
@@ -23,9 +23,16 @@ const secoes = [
     pronto: true,
   },
   {
+    href: "/configuracoes/conta-azul",
+    titulo: "Conta Azul",
+    descricao: "Conexão com a Conta Azul, a fonte do cadastro de clientes: conectar e sincronizar agora.",
+    icone: Link2,
+    pronto: true,
+  },
+  {
     href: "/configuracoes/sincronizacao",
     titulo: "Log de sincronização",
-    descricao: "Execuções diárias da integração com o Domínio: o que entrou, mudou ou falhou.",
+    descricao: "Execuções diárias da integração com a Conta Azul: o que entrou, mudou ou falhou.",
     icone: RefreshCw,
     pronto: true,
   },

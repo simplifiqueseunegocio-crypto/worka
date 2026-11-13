@@ -3,10 +3,16 @@ import { createClient } from "@/lib/supabase/server";
 
 export type StatusExecucao = "sucesso" | "recusado" | "erro";
 
+// Domínio (histórico) grava códigos numéricos; a Conta Azul grava "Nome · CNPJ".
+export type ItemLog = number | string;
+
 export type DetalhesExecucao = {
-  inseridos?: number[];
-  reativados?: number[];
-  suspensos?: number[];
+  inseridos?: ItemLog[];
+  reativados?: ItemLog[];
+  suspensos?: ItemLog[];
+  vinculados?: string[];
+  ignorados?: string[];
+  inativos?: number;
   regimes?: { codigo: number; de: string | null; para: string | null }[];
   erros?: string[];
 };

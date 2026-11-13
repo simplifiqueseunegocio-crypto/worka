@@ -79,48 +79,41 @@ para reenviar o e-mail (convite expirado ou senha esquecida) e desativar ou reat
   *Authentication → Sign In / Providers → Email*.
 - Cadastre `APP_URL` com o endereço público da plataforma, para os links dos e-mails.
 
-## Integração com o Domínio
+## Integração com a Conta Azul (cadastro de clientes)
 
-O Domínio envia a lista completa de empresas **ativas** para a plataforma.
+A Conta Azul é a fonte do cadastro de clientes. Todo dia às 23:00 (Vercel Cron,
+`/api/automacoes/conta-azul`) a plataforma lê, pela API v2 da Conta Azul, as pessoas
+com perfil **Cliente** da conta do escritório e sincroniza a tabela `clientes`
+(migration `…_integracao_conta_azul.sql`). Substitui a antiga integração com o Domínio.
 
-1. Rode a consulta [`integracoes/dominio/empresas-ativas.sql`](integracoes/dominio/empresas-ativas.sql) no banco do Domínio.
-2. Envie o resultado em JSON (um array, ou `{ "empresas": [...] }`), com os nomes de coluna da consulta:
+### Configuração
 
-```bash
-curl -X POST https://SEU-DOMINIO/api/integracoes/dominio/clientes \
-  -H "Authorization: Bearer $DOMINIO_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d @empresas.json
-```
+1. No [Portal do Desenvolvedor da Conta Azul](https://developers.contaazul.com), no seu app,
+   cadastre a URL de redirecionamento `<APP_URL>/api/integracoes/conta-azul/retorno`
+   (a tela **Configurações → Conta Azul** mostra o endereço exato).
+2. Cadastre `CONTA_AZUL_CLIENT_ID` e `CONTA_AZUL_CLIENT_SECRET` (e `CRON_SECRET`) no `.env` e na Vercel.
+3. Como admin, em **Configurações → Conta Azul**, clique em **Conectar Conta Azul**, entre com a conta
+   do ERP do escritório e autorize. Depois, **Sincronizar agora**.
 
-Regras:
+Os tokens OAuth ficam na tabela `conta_azul_conexao` (só o servidor acessa). O access token dura
+1 hora e é renovado sozinho; o refresh token muda a cada renovação. Se a autorização expirar ou for
+revogada, a sincronização registra o erro e um admin clica em **Reconectar**.
 
-- A chave é o `codigo_dominio` (`codi_emp`). O mesmo CNPJ pode aparecer em mais de um código.
-- Empresa nova é inserida como **ativa**; empresa já existente é atualizada.
-- Empresa que veio do Domínio e **não está no envio** passa para **suspensa**; se voltar, fica ativa de novo.
-  Ao ser suspensa assim, as **tarefas em aberto** dela são apagadas (as concluídas e dispensadas ficam
-  como histórico); se voltar, recebe tarefas a partir da próxima geração (`…_tarefas_cliente_fora_dominio.sql`).
-  Suspender ou encerrar pela tela não apaga tarefas.
-- O regime vem do Domínio (`rfed_par`: 1 Real, 2 Simples, 5 Presumido); código desconhecido ou vazio mantém o regime da plataforma.
-- Observações e responsáveis são da plataforma e não são sobrescritos.
-- Se o envio tiver menos de 80% das empresas ativas atuais, ele é recusado (409),
-  para que uma consulta incompleta não suspenda a carteira. Use `?forcar=true` se a queda for real.
+### Regras
 
-Respostas: `200` `{ recebidas, inseridas, atualizadas, suspensas }` · `401` token inválido ·
-`409` envio recusado · `422` dados inválidos (com `detalhes`) · `503` servidor sem `SUPABASE_SECRET_KEY`.
+- A chave é o `conta_azul_id` (id da pessoa na Conta Azul). Na **primeira** sincronização, clientes
+  que já existiam (do Domínio ou cadastrados à mão) são **vinculados pelo CNPJ/CPF**, sem duplicar.
+- Só entram pessoas **ativas** com CPF ou CNPJ válido; as demais são listadas no log como ignoradas.
+- Cliente novo entra **ativo** e **sem regime**: defina o regime na plataforma para ele receber obrigações.
+- Cliente que veio da Conta Azul e **não vem mais** (ou foi inativado lá) passa para **suspenso** e perde as
+  **tarefas em aberto** (concluídas e dispensadas ficam); se voltar, é reativado.
+- Status definido pela equipe (suspender/encerrar pela tela) não é alterado pela sincronização.
+- Regime, observações e responsáveis são da plataforma. Campo vazio na Conta Azul não apaga o dado existente.
+- Se vierem menos de 80% dos clientes ativos atuais, a sincronização é recusada, para uma leitura
+  incompleta não suspender a carteira. Use **Forçar** na tela (ou `?forcar=1` na rota) se a queda for real.
 
-### Rotina diária (servidor do Domínio)
-
-`integracoes/dominio/sincronizar-dominio.bat` roda a consulta via ODBC (DSN `Contabil`, 32 bits)
-e envia o resultado para a API. Logs locais em `integracoes/dominio/logs/` (30 dias); cada execução
-— inclusive falhas antes do envio — também aparece em **Configurações → Log de sincronização**.
-
-1. Copie `sincronizar.config.example` para `sincronizar.config` e preencha usuário/senha do Domínio,
-   `API_URL` e `DOMINIO_API_TOKEN`. Esse arquivo não vai para o git.
-2. Teste a consulta sem enviar nada: `sincronizar-dominio.bat -SomenteConsulta`.
-3. Teste o envio: `sincronizar-dominio.bat`.
-4. Agende: botão direito em `instalar-agendamento.bat` > **Executar como administrador**.
-   Cria a tarefa `\MCONT\Sincronizar Dominio`, todo dia às 23:00, como SYSTEM.
+Cada execução aparece em **Configurações → Log de sincronização**. O histórico das execuções do
+Domínio continua lá; a coluna `codigo_dominio` fica como referência nos clientes antigos.
 
 ## Certidões (CND)
 
@@ -176,7 +169,7 @@ de imagem em toda consulta.
 
 Federal e FGTS valem para todo cliente. A estadual e a municipal só entram na fila para clientes de uma
 UF ou município listado em `cnd_cobertura`, pelo `uf` e pelo nome do município (`clientes.municipio`) que
-vêm do Domínio (`bethadba.gemunicipio`). Os demais aparecem na tela com um traço ("Sem cobertura") e não
+vêm da Conta Azul (o nome é comparado sem acento e sem diferença de maiúsculas). Os demais aparecem na tela com um traço ("Sem cobertura") e não
 contam como erro. Hoje: estadual em **SP** (SIDEB) e municipal em **São José do Rio Preto** e, com
 o SIA da Fiorilli, em Jaci, Bady Bassitt, Nova Aliança, Sales, Irapuã, Meridiano, Guararapes e
 Potirendaba, depois de aplicar `supabase/cobertura-sia.sql`.

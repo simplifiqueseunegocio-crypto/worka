@@ -42,7 +42,7 @@ export async function AbaCadastro({ cliente, contatos }: { cliente: ClienteDetal
     <div className="grid gap-4 xl:grid-cols-5">
       <Cartao
         titulo="Dados cadastrais"
-        subtitulo={cliente.sincronizado_em ? `Sincronizado com o Domínio em ${dataHora(cliente.sincronizado_em)}` : "Cadastrado na plataforma"}
+        subtitulo={cliente.sincronizado_em ? `Sincronizado com a Conta Azul em ${dataHora(cliente.sincronizado_em)}` : "Cadastrado na plataforma"}
         icone={Building2}
         className="xl:col-span-3"
       >
