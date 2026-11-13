@@ -16,7 +16,9 @@ export async function sincronizarClienteAgora(clienteId: string): Promise<Estado
   if (!(await exigirAdmin())) return { erro: "Apenas administradores podem sincronizar." };
   const r = await sincronizarCliente(clienteId);
   revalidatePath("/configuracoes/conta-azul");
-  return r.ok ? { ok: `Sincronizado: ${r.pessoas} clientes e fornecedores.` } : { erro: r.erro };
+  if (!r.ok) return { erro: r.erro };
+  const texto = `Sincronizado: ${r.pessoas} clientes e fornecedores, ${r.parcelas} parcelas em aberto, ${r.contas} contas.`;
+  return r.avisos.length ? { erro: `${texto} Avisos: ${r.avisos.join(" · ")}` } : { ok: texto };
 }
 
 // Sincroniza todos os clientes conectados (o mesmo que a rotina das 23:00).

@@ -143,7 +143,6 @@ async function accessToken(clienteId: string): Promise<string> {
   }
 }
 
-const chamarApi = async <T>(clienteId: string, caminho: string) => getComToken<T>(await accessToken(clienteId), caminho);
 
 // ---------------------------------------------------------------------------
 // Normalização
@@ -247,7 +246,51 @@ export async function concluirConexao(
 }
 
 // ---------------------------------------------------------------------------
-// Sincronizar um cliente: cadastro da empresa + clientes e fornecedores
+// Sincronizar um cliente: cadastro, clientes e fornecedores, financeiro, vendas e notas
+
+// Datas em Brasília (AAAA-MM-DD).
+const diaBR = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo" }).format(d);
+const somarDiasISO = (iso: string, dias: number) => {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + dias);
+  return d.toISOString().slice(0, 10);
+};
+const numero = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+
+async function gravarEmLotes(tabela: string, linhas: Record<string, unknown>[]) {
+  const supabase = createAdminClient();
+  for (let i = 0; i < linhas.length; i += LOTE_GRAVACAO) {
+    const { error } = await supabase.from(tabela).upsert(linhas.slice(i, i + LOTE_GRAVACAO));
+    if (error) throw new Error(`Falha ao gravar ${tabela}: ${error.message}`);
+  }
+}
+
+// Remove do cliente o que não foi regravado nesta rodada (sumiu da Conta Azul).
+async function limparAntigos(tabela: string, clienteId: string, agora: string, filtro?: Record<string, string>) {
+  let q = createAdminClient().from(tabela).delete().eq("cliente_id", clienteId).lt("atualizado_em", agora);
+  for (const [k, v] of Object.entries(filtro ?? {})) q = q.eq(k, v);
+  const { error } = await q;
+  if (error) throw new Error(`Falha ao limpar ${tabela}: ${error.message}`);
+}
+
+// --- Cadastro da empresa ---------------------------------------------------
+
+async function sincronizarCadastro(clienteId: string, token: string, agora: string) {
+  const empresa = await getComToken<EmpresaCA>(token, "/v1/pessoas/conta-conectada");
+  const atualizar: Record<string, string> = { sincronizado_em: agora };
+  const razao = texto(empresa.razao_social);
+  if (razao) atualizar.razao_social = razao;
+  const fantasia = texto(empresa.nome_fantasia);
+  if (fantasia) atualizar.fantasia = fantasia;
+  const email = texto(empresa.email)?.toLowerCase();
+  if (email) atualizar.email = email;
+  const telefone = digitos(empresa.telefone);
+  if (telefone) atualizar.telefone = telefone;
+  await createAdminClient().from("clientes").update(atualizar).eq("id", clienteId);
+  return fantasia || razao || null;
+}
+
+// --- Clientes e fornecedores -----------------------------------------------
 
 type PessoaCA = {
   id: string;
@@ -260,20 +303,14 @@ type PessoaCA = {
   perfis?: string[] | null;
 };
 
-// Clientes e fornecedores da empresa. A API filtra um perfil e um tipo de
-// pessoa por vez (o padrão dela é só "Física"), então percorre as combinações.
-async function listarPessoas(clienteId: string) {
-  const token = await accessToken(clienteId);
+// A API filtra um perfil e um tipo de pessoa por vez (o padrão dela é só
+// "Física"), então percorre as combinações.
+async function sincronizarPessoas(clienteId: string, token: string, agora: string) {
   const todas = new Map<string, PessoaCA & { perfisVistos: Set<string> }>();
   for (const perfil of ["Cliente", "Fornecedor"]) {
     for (const tipo of ["Jurídica", "Física", "Estrangeira"]) {
       for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
-        const q = new URLSearchParams({
-          pagina: String(pagina),
-          tamanho_pagina: String(TAMANHO_PAGINA),
-          tipo_perfil: perfil,
-          tipos_pessoa: tipo,
-        });
+        const q = new URLSearchParams({ pagina: String(pagina), tamanho_pagina: String(TAMANHO_PAGINA), tipo_perfil: perfil, tipos_pessoa: tipo });
         const r = await getComToken<{ items?: PessoaCA[] }>(token, `/v1/pessoas?${q}`);
         const itens = r.items ?? [];
         for (const p of itens) {
@@ -287,62 +324,273 @@ async function listarPessoas(clienteId: string) {
       }
     }
   }
-  return [...todas.values()];
+  const linhas = [...todas.values()].map((p) => ({
+    cliente_id: clienteId,
+    id: p.id,
+    nome: texto(p.nome) ?? "(sem nome)",
+    documento: digitos(p.documento),
+    email: texto(p.email)?.toLowerCase() ?? null,
+    telefone: digitos(p.telefone),
+    tipo_pessoa: texto(p.tipo_pessoa),
+    perfis: [...p.perfisVistos],
+    ativo: p.ativo !== false,
+    atualizado_em: agora,
+  }));
+  await gravarEmLotes("conta_azul_pessoas", linhas);
+  await limparAntigos("conta_azul_pessoas", clienteId, agora);
+  return linhas.length;
 }
 
-export type ResultadoCliente = { ok: true; pessoas: number } | { ok: false; erro: string; desconectado: boolean };
+// --- Financeiro: contas a receber e a pagar em aberto ----------------------
+
+type ParcelaCA = {
+  id: string;
+  descricao?: string | null;
+  data_vencimento?: string | null;
+  data_competencia?: string | null;
+  total?: number | null;
+  pago?: number | null;
+  nao_pago?: number | null;
+  status?: string | null;
+  status_traduzido?: string | null;
+  cliente?: { nome?: string | null } | null;
+  fornecedor?: { nome?: string | null } | null;
+};
+
+const PAGINA_PARCELAS = 200;
+
+async function sincronizarParcelas(clienteId: string, token: string, agora: string) {
+  // A API exige um intervalo de vencimento de até 365 dias.
+  const hoje = diaBR(new Date());
+  const de = somarDiasISO(hoje, -330);
+  const ate = somarDiasISO(hoje, 30);
+  let total = 0;
+  for (const [tipo, caminho] of [["receber", "contas-a-receber"], ["pagar", "contas-a-pagar"]] as const) {
+    const linhas: Record<string, unknown>[] = [];
+    for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
+      const q = new URLSearchParams({
+        pagina: String(pagina),
+        tamanho_pagina: String(PAGINA_PARCELAS),
+        data_vencimento_de: de,
+        data_vencimento_ate: ate,
+        status: "EM_ABERTO,ATRASADO,RECEBIDO_PARCIAL",
+      });
+      const r = await getComToken<{ itens?: ParcelaCA[] }>(token, `/v1/financeiro/${caminho}?${q}`);
+      const itens = r.itens ?? [];
+      for (const p of itens) {
+        if (!p?.id) continue;
+        linhas.push({
+          cliente_id: clienteId,
+          tipo,
+          id: p.id,
+          descricao: texto(p.descricao),
+          contraparte: texto((tipo === "receber" ? p.cliente : p.fornecedor)?.nome),
+          vencimento: texto(p.data_vencimento)?.slice(0, 10) ?? null,
+          competencia: texto(p.data_competencia)?.slice(0, 10) ?? null,
+          total: numero(p.total),
+          pago: numero(p.pago),
+          nao_pago: numero(p.nao_pago),
+          status: texto(p.status_traduzido) ?? texto(p.status),
+          atualizado_em: agora,
+        });
+      }
+      if (itens.length < PAGINA_PARCELAS) break;
+    }
+    await gravarEmLotes("conta_azul_parcelas", linhas);
+    await limparAntigos("conta_azul_parcelas", clienteId, agora, { tipo });
+    total += linhas.length;
+  }
+  return total;
+}
+
+// --- Contas financeiras e saldos ------------------------------------------
+
+type ContaCA = { id: string; nome?: string | null; tipo?: string | null; banco?: string | null };
+
+async function sincronizarContas(clienteId: string, token: string, agora: string) {
+  const q = new URLSearchParams({ pagina: "1", tamanho_pagina: "1000", apenas_ativo: "true" });
+  const r = await getComToken<{ itens?: ContaCA[] }>(token, `/v1/financeiro/contas-financeiras?${q}`);
+  const linhas: Record<string, unknown>[] = [];
+  for (const c of r.itens ?? []) {
+    if (!c?.id) continue;
+    let saldo: number | null = null;
+    try {
+      const s = await getComToken<{ saldo_atual?: number }>(token, `/v1/financeiro/contas-financeiras/${encodeURIComponent(c.id)}/saldo-atual`);
+      saldo = typeof s.saldo_atual === "number" ? s.saldo_atual : null;
+    } catch (e) {
+      if (e instanceof ContaAzulDesconectada) throw e;
+      // Algumas contas (ex.: meios de recebimento) podem não ter saldo: segue sem.
+    }
+    linhas.push({ cliente_id: clienteId, id: c.id, nome: texto(c.nome) ?? "Conta", tipo: texto(c.tipo), banco: texto(c.banco), saldo, atualizado_em: agora });
+  }
+  await gravarEmLotes("conta_azul_contas", linhas);
+  await limparAntigos("conta_azul_contas", clienteId, agora);
+  return linhas.length;
+}
+
+// --- Vendas e notas (últimos 3 meses) -------------------------------------
+
+const MESES = 3;
+
+function mesesRecentes() {
+  const hoje = diaBR(new Date());
+  const [a, m] = hoje.split("-").map(Number);
+  return Array.from({ length: MESES }, (_, i) => {
+    const ini = new Date(Date.UTC(a, m - 1 - i, 1)).toISOString().slice(0, 10);
+    const fim = new Date(Date.UTC(a, m - i, 0)).toISOString().slice(0, 10);
+    return { competencia: ini, de: ini, ate: fim < hoje ? fim : hoje };
+  });
+}
+
+async function contarVendas(token: string, de: string, ate: string) {
+  const q = new URLSearchParams({ pagina: "1", tamanho_pagina: "10", data_inicio: de, data_fim: ate, totais: "ALL" });
+  const r = await getComToken<{ totais?: { aprovado?: number }; quantidades?: { aprovado?: number } }>(token, `/v1/venda/busca?${q}`);
+  return { total: numero(r.totais?.aprovado), qtd: Math.round(numero(r.quantidades?.aprovado)) };
+}
+
+// NFS-e: a API aceita janelas de até 15 dias; soma as emitidas.
+async function somarNfse(token: string, de: string, ate: string) {
+  let total = 0;
+  let qtd = 0;
+  for (let ini = de; ini <= ate; ini = somarDiasISO(ini, 15)) {
+    const fimJanela = somarDiasISO(ini, 14) < ate ? somarDiasISO(ini, 14) : ate;
+    for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
+      const q = new URLSearchParams({
+        pagina: String(pagina),
+        tamanho_pagina: "100",
+        data_competencia_de: ini,
+        data_competencia_ate: fimJanela,
+        status: "EMITIDA,CORRIGIDA_SUCESSO",
+      });
+      const r = await getComToken<{ itens?: { valor_total_nfse?: number }[]; paginacao?: { total_paginas?: number } }>(
+        token,
+        `/v1/notas-fiscais-servico?${q}`,
+      );
+      for (const n of r.itens ?? []) {
+        total += numero(n.valor_total_nfse);
+        qtd++;
+      }
+      if ((r.itens?.length ?? 0) < 100 || pagina >= (r.paginacao?.total_paginas ?? 1)) break;
+    }
+  }
+  return { total, qtd };
+}
+
+// NF-e emitidas no período (a listagem não traz o valor).
+async function contarNfe(token: string, de: string, ate: string) {
+  let qtd = 0;
+  for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
+    const q = new URLSearchParams({ pagina: String(pagina), tamanho_pagina: "100", data_inicial: de, data_final: ate });
+    const r = await getComToken<{ itens?: unknown[] }>(token, `/v1/notas-fiscais?${q}`);
+    const n = r.itens?.length ?? 0;
+    qtd += n;
+    if (n < 100) break;
+  }
+  return qtd;
+}
+
+// Devolve as fontes que falharam (a empresa pode não usar vendas, NFS-e ou NF-e).
+async function sincronizarMensal(clienteId: string, token: string, agora: string) {
+  const falhas: string[] = [];
+  const meses = mesesRecentes();
+  const linhas: Record<string, unknown>[] = [];
+  for (const m of meses) {
+    const linha: Record<string, unknown> = { cliente_id: clienteId, competencia: m.competencia, atualizado_em: agora };
+    const tentar = async (rotulo: string, fn: () => Promise<void>) => {
+      try {
+        await fn();
+      } catch (e) {
+        if (e instanceof ContaAzulDesconectada) throw e;
+        console.error(`Conta Azul: ${rotulo} do cliente ${clienteId}`, e);
+        if (!falhas.includes(rotulo)) falhas.push(rotulo);
+      }
+    };
+    await tentar("vendas", async () => {
+      const v = await contarVendas(token, m.de, m.ate);
+      linha.vendas_total = v.total;
+      linha.vendas_qtd = v.qtd;
+    });
+    await tentar("NFS-e", async () => {
+      const s = await somarNfse(token, m.de, m.ate);
+      linha.nfse_total = s.total;
+      linha.nfse_qtd = s.qtd;
+    });
+    await tentar("NF-e", async () => {
+      linha.nfe_qtd = await contarNfe(token, m.de, m.ate);
+    });
+    linhas.push(linha);
+  }
+  await gravarEmLotes("conta_azul_mensal", linhas);
+  // Meses que saíram da janela.
+  const { error } = await createAdminClient()
+    .from("conta_azul_mensal")
+    .delete()
+    .eq("cliente_id", clienteId)
+    .lt("competencia", meses[meses.length - 1].competencia);
+  if (error) throw new Error(`Falha ao limpar conta_azul_mensal: ${error.message}`);
+  return falhas;
+}
+
+// --- Um cliente, todas as áreas -------------------------------------------
+
+export type ResultadoCliente =
+  | { ok: true; pessoas: number; parcelas: number; contas: number; avisos: string[] }
+  | { ok: false; erro: string; desconectado: boolean };
 
 export async function sincronizarCliente(clienteId: string): Promise<ResultadoCliente> {
   const supabase = createAdminClient();
   const agora = new Date().toISOString();
-  try {
-    // 1) Cadastro da empresa. Campo vazio na Conta Azul não apaga o que já existe.
-    const empresa = await chamarApi<EmpresaCA>(clienteId, "/v1/pessoas/conta-conectada");
-    const atualizar: Record<string, string> = {};
-    const razao = texto(empresa.razao_social);
-    if (razao) atualizar.razao_social = razao;
-    const fantasia = texto(empresa.nome_fantasia);
-    if (fantasia) atualizar.fantasia = fantasia;
-    const email = texto(empresa.email)?.toLowerCase();
-    if (email) atualizar.email = email;
-    const telefone = digitos(empresa.telefone);
-    if (telefone) atualizar.telefone = telefone;
-    atualizar.sincronizado_em = agora;
-    await supabase.from("clientes").update(atualizar).eq("id", clienteId);
+  const avisos: string[] = [];
+  let pessoas = 0;
+  let parcelas = 0;
+  let contas = 0;
+  let nome: string | null = null;
 
-    // 2) Clientes e fornecedores: grava os lidos e remove os que sumiram.
-    const pessoas = await listarPessoas(clienteId);
-    const linhas = pessoas
-      .map((p) => ({
-        cliente_id: clienteId,
-        id: p.id,
-        nome: texto(p.nome) ?? "(sem nome)",
-        documento: digitos(p.documento),
-        email: texto(p.email)?.toLowerCase() ?? null,
-        telefone: digitos(p.telefone),
-        tipo_pessoa: texto(p.tipo_pessoa),
-        perfis: [...p.perfisVistos],
-        ativo: p.ativo !== false,
-        atualizado_em: agora,
-      }));
-    for (let i = 0; i < linhas.length; i += LOTE_GRAVACAO) {
-      const { error } = await supabase.from("conta_azul_pessoas").upsert(linhas.slice(i, i + LOTE_GRAVACAO));
-      if (error) throw new Error(`Falha ao gravar clientes e fornecedores: ${error.message}`);
+  // Cada área roda separada: uma falha não impede as outras (vai para os avisos).
+  const area = async (rotulo: string, fn: () => Promise<void>) => {
+    try {
+      await fn();
+    } catch (e) {
+      if (e instanceof ContaAzulDesconectada) throw e;
+      console.error(`Conta Azul: ${rotulo} do cliente ${clienteId}`, e);
+      avisos.push(`${rotulo}: ${e instanceof Error ? e.message : "falha inesperada"}`);
     }
-    // Quem não foi atualizado agora saiu da Conta Azul da empresa.
-    await supabase.from("conta_azul_pessoas").delete().eq("cliente_id", clienteId).lt("atualizado_em", agora);
+  };
 
-    await supabase
-      .from("conta_azul_conexoes")
-      .update({ sincronizado_em: agora, ultimo_erro: null, empresa_nome: fantasia || razao || undefined })
-      .eq("cliente_id", clienteId);
-    return { ok: true, pessoas: linhas.length };
+  try {
+    const token = await accessToken(clienteId);
+    await area("Cadastro", async () => {
+      nome = await sincronizarCadastro(clienteId, token, agora);
+    });
+    await area("Clientes e fornecedores", async () => {
+      pessoas = await sincronizarPessoas(clienteId, token, agora);
+    });
+    await area("Contas a receber e a pagar", async () => {
+      parcelas = await sincronizarParcelas(clienteId, token, agora);
+    });
+    await area("Saldos", async () => {
+      contas = await sincronizarContas(clienteId, token, agora);
+    });
+    await area("Vendas e notas", async () => {
+      const semAcesso = await sincronizarMensal(clienteId, token, agora);
+      if (semAcesso.length) avisos.push(`Não foi possível ler: ${semAcesso.join(", ")}`);
+    });
   } catch (e) {
     const erro = e instanceof Error ? e.message : "Falha inesperada.";
     console.error(`Conta Azul: falha ao sincronizar o cliente ${clienteId}`, e);
     await supabase.from("conta_azul_conexoes").update({ ultimo_erro: erro.slice(0, 1000) }).eq("cliente_id", clienteId);
     return { ok: false, erro, desconectado: e instanceof ContaAzulDesconectada };
   }
+
+  await supabase
+    .from("conta_azul_conexoes")
+    .update({
+      sincronizado_em: agora,
+      ultimo_erro: avisos.length ? avisos.join(" · ").slice(0, 1000) : null,
+      ...(nome ? { empresa_nome: nome } : {}),
+    })
+    .eq("cliente_id", clienteId);
+  return { ok: true, pessoas, parcelas, contas, avisos };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,11 +1,12 @@
 import Link from "next/link";
-import { Building2, FolderOpen, LayoutDashboard, ListChecks, Receipt, ShieldCheck, Users, type LucideIcon } from "lucide-react";
+import { Building2, FolderOpen, LayoutDashboard, Link2, ListChecks, Receipt, ShieldCheck, Users, type LucideIcon } from "lucide-react";
 
 export const ABAS = [
   { chave: "visao", rotulo: "Visão geral", icone: LayoutDashboard },
   { chave: "tarefas", rotulo: "Tarefas", icone: ListChecks },
   { chave: "certidoes", rotulo: "Certidões", icone: ShieldCheck },
   { chave: "fiscal", rotulo: "Fiscal e financeiro", icone: Receipt },
+  { chave: "conta-azul", rotulo: "Conta Azul", icone: Link2 },
   { chave: "pessoal", rotulo: "Pessoal", icone: Users },
   { chave: "documentos", rotulo: "Documentos e vencimentos", icone: FolderOpen },
   { chave: "cadastro", rotulo: "Cadastro", icone: Building2 },

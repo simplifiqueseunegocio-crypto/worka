@@ -22,6 +22,7 @@ import { AbasCliente, lerAba, type Aba } from "@/components/clientes/painel/abas
 import { VisaoGeral } from "@/components/clientes/painel/visao-geral";
 import { AbaTarefas } from "@/components/clientes/painel/aba-tarefas";
 import { AbaFiscal } from "@/components/clientes/painel/aba-fiscal";
+import { AbaContaAzul } from "@/components/clientes/painel/aba-conta-azul";
 import { AbaPessoal } from "@/components/clientes/painel/aba-pessoal";
 import { AbaDocumentos } from "@/components/clientes/painel/aba-documentos";
 import { AbaCadastro } from "@/components/clientes/painel/aba-cadastro";
@@ -151,6 +152,8 @@ async function ConteudoAba({
       ]);
       return <AbaFiscal clienteId={cliente.id} acesso={{ nfse, guia, comprovante }} />;
     }
+    case "conta-azul":
+      return <AbaContaAzul clienteId={cliente.id} admin={usuario.papel === "admin"} />;
     case "pessoal":
       return <AbaPessoal clienteId={cliente.id} acessoDp={await podeUsarPonto(usuario)} />;
     case "documentos":
