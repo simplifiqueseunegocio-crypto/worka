@@ -66,7 +66,7 @@ async function sincronizacaoContaAzul(gestor: boolean): Promise<Rotina> {
     chave: "conta-azul",
     titulo: "Sincronização com a Conta Azul",
     descricao:
-      "Traz os clientes ativos da Conta Azul: cadastra os novos, atualiza os dados, reativa e suspende, e apaga as tarefas em aberto de quem saiu.",
+      "Para cada cliente conectado, lê da Conta Azul Pro dele o cadastro da empresa e os clientes e fornecedores.",
     agenda: "Todo dia às 23:00",
     onde: "Plataforma (API Conta Azul)",
     href: "/configuracoes/conta-azul",
@@ -79,8 +79,8 @@ async function sincronizacaoContaAzul(gestor: boolean): Promise<Rotina> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("integracao_execucoes")
-    .select("iniciado_em, status, recebidas, inseridas, suspensas, mensagem")
-    .eq("integracao", "conta_azul_clientes")
+    .select("iniciado_em, status, mensagem")
+    .eq("integracao", "conta_azul")
     .order("iniciado_em", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -92,7 +92,7 @@ async function sincronizacaoContaAzul(gestor: boolean): Promise<Rotina> {
   const atrasada = horas >= 26;
   const resumo =
     data.status === "sucesso"
-      ? `${plural(data.recebidas ?? 0, "cliente recebido", "clientes recebidos")} · ${data.inseridas ?? 0} novos · ${data.suspensas ?? 0} suspensos`
+      ? (data.mensagem ?? "Sincronizado.")
       : (data.mensagem ?? "A última execução falhou.");
   return {
     ...base,

@@ -2,16 +2,20 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarExecucao } from "@/lib/integracoes/execucoes";
 
-// Integração com a Conta Azul (API v2, OAuth 2.0): a lista de clientes da
-// conta do escritório alimenta o cadastro de clientes da plataforma.
+// Integração com a Conta Azul (API v2, OAuth 2.0): UMA CONEXÃO POR CLIENTE.
+//
+// Cada empresa cliente tem a sua Conta Azul Pro. O escritório entra nela com um
+// usuário próprio (um e-mail por empresa) e autoriza o app; a plataforma guarda
+// os tokens daquele cliente (tabela conta_azul_conexoes, só o servidor acessa)
+// e, todo dia, lê o cadastro da empresa e os clientes e fornecedores dela.
 //
 // Documentação: https://developers.contaazul.com
 //   Login:  https://login.contaazul.com/#/oauth/authorize
 //   Token:  POST https://api-v2.contaazul.com/oauth/token (Basic client_id:secret)
-//   Dados:  GET  https://api-v2.contaazul.com/v1/pessoas?tipo_perfil=Cliente
+//   Dados:  GET  https://api-v2.contaazul.com/v1/pessoas/conta-conectada  (a empresa)
+//           GET  https://api-v2.contaazul.com/v1/pessoas                  (clientes e fornecedores)
 //
-// O access_token vale 1 hora; o refresh_token MUDA a cada renovação e por isso
-// fica no banco (tabela conta_azul_conexao, acessível só pelo servidor).
+// O access_token vale 1 hora; o refresh_token MUDA a cada renovação.
 
 const URL_LOGIN = "https://login.contaazul.com/#/oauth/authorize";
 const URL_TOKEN = "https://api-v2.contaazul.com/oauth/token";
@@ -20,18 +24,16 @@ const ESCOPO = "openid+profile+aws.cognito.signin.user.admin";
 const MARGEM_RENOVACAO_MS = 2 * 60_000;
 const TAMANHO_PAGINA = 1000; // máximo aceito pela API
 const LIMITE_PAGINAS = 50;
+const LOTE_GRAVACAO = 500;
 
-export const INTEGRACAO_CONTA_AZUL = "conta_azul_clientes";
+export const INTEGRACAO_CONTA_AZUL = "conta_azul";
 
-// Cookie com o state do login OAuth (proteção contra CSRF).
+// Cookie com o state do login OAuth (proteção contra CSRF) e, ao reconectar,
+// o cliente esperado: "<state>.<cliente_id>".
 export const COOKIE_STATE = "worka_ca_state";
 
-/** Conta Azul não conectada, ou a autorização foi revogada/expirou. */
-export class ContaAzulDesconectada extends Error {
-  constructor(mensagem = "Conta Azul não conectada. Um administrador precisa conectar em Configurações → Conta Azul.") {
-    super(mensagem);
-  }
-}
+/** Cliente sem conexão, ou a autorização foi revogada/expirou. */
+export class ContaAzulDesconectada extends Error {}
 
 // ---------------------------------------------------------------------------
 // Configuração
@@ -85,46 +87,33 @@ async function pedirToken(corpo: Record<string, string>): Promise<RespostaToken>
 
 const expiraEm = (t: RespostaToken) => new Date(Date.now() + (t.expires_in ?? 3600) * 1000).toISOString();
 
-// Troca o código do login pelos tokens e grava a conexão (substitui a anterior).
-export async function concluirConexao(code: string, redirectUri: string, usuarioId: string) {
-  const t = await pedirToken({ grant_type: "authorization_code", code, redirect_uri: redirectUri });
-  const supabase = createAdminClient();
-  const { error } = await supabase.from("conta_azul_conexao").upsert({
-    id: 1,
-    access_token: t.access_token,
-    refresh_token: t.refresh_token,
-    expira_em: expiraEm(t),
-    conectado_por: usuarioId,
-    conectado_em: new Date().toISOString(),
-    atualizado_em: new Date().toISOString(),
-    conta_nome: null,
-    conta_documento: null,
+// GET com um access token já obtido. Repete em caso de limite (429).
+async function getComToken<T>(token: string, caminho: string, tentativa = 0): Promise<T> {
+  const r = await fetch(`${URL_API}${caminho}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+    cache: "no-store",
   });
-  if (error) throw new Error(`Falha ao gravar a conexão: ${error.message}`);
-
-  // Nome da empresa conectada, só para exibir. Falha aqui não desfaz a conexão.
-  try {
-    const conta = await chamarApi<{ razao_social?: string; nome_fantasia?: string; documento?: string }>("/v1/pessoas/conta-conectada");
-    await supabase
-      .from("conta_azul_conexao")
-      .update({ conta_nome: conta.nome_fantasia || conta.razao_social || null, conta_documento: conta.documento ?? null })
-      .eq("id", 1);
-  } catch (e) {
-    console.error("Conta Azul: não foi possível ler a conta conectada", e);
+  if (r.status === 429 && tentativa < 3) {
+    const espera = Number(r.headers.get("retry-after")) * 1000 || 2000 * (tentativa + 1);
+    await new Promise((ok) => setTimeout(ok, Math.min(espera, 15_000)));
+    return getComToken<T>(token, caminho, tentativa + 1);
   }
+  if (r.status === 401) throw new ContaAzulDesconectada("A Conta Azul recusou o acesso. Reconecte este cliente.");
+  if (!r.ok) throw new Error(`Conta Azul respondeu ${r.status} em ${caminho}: ${(await r.text()).slice(0, 300)}`);
+  return (await r.json()) as T;
 }
 
-// Access token válido, renovando quando faltam menos de 2 minutos.
-async function accessToken(): Promise<string> {
+// Access token válido do cliente, renovando quando faltam menos de 2 minutos.
+async function accessToken(clienteId: string): Promise<string> {
   const supabase = createAdminClient();
   const ler = async () => {
     const { data, error } = await supabase
-      .from("conta_azul_conexao")
+      .from("conta_azul_conexoes")
       .select("access_token, refresh_token, expira_em")
-      .eq("id", 1)
+      .eq("cliente_id", clienteId)
       .maybeSingle();
-    if (error) throw new Error(`Falha ao ler a conexão da Conta Azul: ${error.message}`);
-    if (!data) throw new ContaAzulDesconectada();
+    if (error) throw new Error(`Falha ao ler a conexão: ${error.message}`);
+    if (!data) throw new ContaAzulDesconectada("Cliente sem conexão com a Conta Azul.");
     return data as { access_token: string | null; refresh_token: string; expira_em: string | null };
   };
 
@@ -137,9 +126,9 @@ async function accessToken(): Promise<string> {
     const t = await pedirToken({ grant_type: "refresh_token", refresh_token: atual.refresh_token });
     // Grava só se ninguém renovou no meio do caminho (o refresh_token gira).
     await supabase
-      .from("conta_azul_conexao")
+      .from("conta_azul_conexoes")
       .update({ access_token: t.access_token, refresh_token: t.refresh_token, expira_em: expiraEm(t), atualizado_em: new Date().toISOString() })
-      .eq("id", 1)
+      .eq("cliente_id", clienteId)
       .eq("refresh_token", atual.refresh_token);
     return t.access_token;
   } catch (e) {
@@ -148,76 +137,16 @@ async function accessToken(): Promise<string> {
     if (depois.refresh_token !== atual.refresh_token && depois.access_token) return depois.access_token;
     const status = (e as { status?: number }).status;
     if (status === 400 || status === 401) {
-      throw new ContaAzulDesconectada("A autorização da Conta Azul expirou ou foi revogada. Conecte de novo em Configurações → Conta Azul.");
+      throw new ContaAzulDesconectada("A autorização da Conta Azul expirou ou foi revogada. Reconecte este cliente.");
     }
     throw e;
   }
 }
 
-async function chamarApi<T>(caminho: string, tentativa = 0): Promise<T> {
-  const token = await accessToken();
-  const r = await fetch(`${URL_API}${caminho}`, {
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
-    cache: "no-store",
-  });
-  // Limite da API (cerca de 10 por segundo / 50 por minuto): espera e tenta de novo.
-  if (r.status === 429 && tentativa < 3) {
-    const espera = Number(r.headers.get("retry-after")) * 1000 || 2000 * (tentativa + 1);
-    await new Promise((ok) => setTimeout(ok, Math.min(espera, 15_000)));
-    return chamarApi<T>(caminho, tentativa + 1);
-  }
-  if (r.status === 401) throw new ContaAzulDesconectada("A Conta Azul recusou o acesso. Conecte de novo em Configurações → Conta Azul.");
-  if (!r.ok) throw new Error(`Conta Azul respondeu ${r.status} em ${caminho}: ${(await r.text()).slice(0, 300)}`);
-  return (await r.json()) as T;
-}
+const chamarApi = async <T>(clienteId: string, caminho: string) => getComToken<T>(await accessToken(clienteId), caminho);
 
 // ---------------------------------------------------------------------------
-// Clientes
-
-type EnderecoCA = {
-  logradouro?: string | null;
-  numero?: string | null;
-  complemento?: string | null;
-  bairro?: string | null;
-  cidade?: string | null;
-  estado?: string | null;
-  cep?: string | null;
-};
-
-export type PessoaCA = {
-  id: string;
-  nome?: string | null;
-  documento?: string | null;
-  email?: string | null;
-  telefone?: string | null;
-  ativo?: boolean | null;
-  tipo_pessoa?: string | null;
-  perfis?: string[] | null;
-  endereco?: EnderecoCA | null;
-};
-
-type PaginaPessoas = { items?: PessoaCA[]; totalItems?: number };
-
-// Todas as pessoas com perfil Cliente, físicas e jurídicas (a API filtra por um
-// tipo de pessoa de cada vez; o padrão dela é só "Física").
-export async function listarClientesContaAzul(): Promise<PessoaCA[]> {
-  const todas = new Map<string, PessoaCA>();
-  for (const tipo of ["Jurídica", "Física"]) {
-    for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
-      const q = new URLSearchParams({
-        pagina: String(pagina),
-        tamanho_pagina: String(TAMANHO_PAGINA),
-        tipo_perfil: "Cliente",
-        tipos_pessoa: tipo,
-      });
-      const r = await chamarApi<PaginaPessoas>(`/v1/pessoas?${q}`);
-      const itens = r.items ?? [];
-      for (const p of itens) if (p?.id) todas.set(p.id, p);
-      if (itens.length < TAMANHO_PAGINA) break;
-    }
-  }
-  return [...todas.values()];
-}
+// Normalização
 
 const texto = (v: unknown) => {
   if (v === null || v === undefined) return null;
@@ -226,162 +155,303 @@ const texto = (v: unknown) => {
 };
 const digitos = (v: unknown) => texto(v)?.replace(/\D/g, "") || null;
 
-export type ClienteNormalizado = {
-  conta_azul_id: string;
-  documento: string;
-  razao_social: string;
-  email: string | null;
-  telefone: string | null;
-  logradouro: string | null;
-  numero: string | null;
-  complemento: string | null;
-  bairro: string | null;
-  municipio: string | null;
-  uf: string | null;
-  cep: string | null;
+type EmpresaCA = {
+  razao_social?: string | null;
+  nome_fantasia?: string | null;
+  documento?: string | null;
+  email?: string | null;
+  telefone?: string | null;
 };
 
-// Só entram pessoas ATIVAS com CPF ou CNPJ válido e nome. As demais ficam de
-// fora e são listadas no log.
-export function normalizarClientes(pessoas: PessoaCA[]) {
-  const clientes: ClienteNormalizado[] = [];
-  const ignorados: string[] = [];
-  let inativos = 0;
+// ---------------------------------------------------------------------------
+// Conectar: troca o código, identifica a empresa e cria/vincula o cliente
 
-  for (const p of pessoas) {
-    if (p.ativo === false) {
-      inativos++;
-      continue;
-    }
-    const nome = texto(p.nome);
-    const documento = digitos(p.documento);
-    if (!nome || !documento || !/^(\d{11}|\d{14})$/.test(documento)) {
-      ignorados.push(`${nome ?? "(sem nome)"}: ${documento ? "documento inválido" : "sem CPF/CNPJ"}`);
-      continue;
-    }
-    const e = p.endereco ?? {};
-    const uf = texto(e.estado)?.toUpperCase() ?? null;
-    clientes.push({
-      conta_azul_id: p.id,
-      documento,
-      razao_social: nome,
-      email: texto(p.email)?.toLowerCase() ?? null,
-      telefone: digitos(p.telefone),
-      logradouro: texto(e.logradouro),
-      numero: texto(e.numero),
-      complemento: texto(e.complemento),
-      bairro: texto(e.bairro),
-      municipio: texto(e.cidade),
-      uf: uf && /^[A-Z]{2}$/.test(uf) ? uf : null,
-      cep: digitos(e.cep),
-    });
+export type ResultadoConexao = { clienteId: string; nome: string; criado: boolean };
+
+export async function concluirConexao(
+  code: string,
+  redirectUri: string,
+  usuarioId: string,
+  clienteEsperado: string | null,
+): Promise<ResultadoConexao> {
+  const t = await pedirToken({ grant_type: "authorization_code", code, redirect_uri: redirectUri });
+  const empresa = await getComToken<EmpresaCA>(t.access_token, "/v1/pessoas/conta-conectada");
+  const documento = digitos(empresa.documento);
+  const razao = texto(empresa.razao_social) ?? texto(empresa.nome_fantasia);
+  if (!documento || !/^(\d{11}|\d{14})$/.test(documento) || !razao) {
+    throw new Error("A Conta Azul conectada não informou razão social e CNPJ/CPF válidos. Confira o cadastro da empresa na Conta Azul.");
   }
-  return { clientes, ignorados, inativos };
+
+  const supabase = createAdminClient();
+  let clienteId: string;
+  let criado = false;
+
+  if (clienteEsperado) {
+    // Reconectar: a empresa que entrou precisa ser a do cliente.
+    const { data: c } = await supabase.from("clientes").select("id, documento, razao_social").eq("id", clienteEsperado).maybeSingle();
+    if (!c) throw new Error("Cliente não encontrado.");
+    if (c.documento !== documento) {
+      throw new Error(
+        `Você entrou na Conta Azul de ${razao} (${documento}), mas está reconectando ${c.razao_social} (${c.documento}). ` +
+          "Entre com o usuário da empresa certa, de preferência numa janela anônima.",
+      );
+    }
+    clienteId = c.id as string;
+  } else {
+    // Adicionar: vincula ao cliente com o mesmo documento (prefere o ativo e o
+    // mais antigo) ou cria um novo.
+    const { data: existentes } = await supabase
+      .from("clientes")
+      .select("id, status, criado_em")
+      .eq("documento", documento)
+      .order("criado_em", { ascending: true });
+    const existente = (existentes ?? []).sort((a, b) => Number(b.status === "ativo") - Number(a.status === "ativo"))[0];
+    if (existente) {
+      clienteId = existente.id as string;
+    } else {
+      const { data: novo, error } = await supabase
+        .from("clientes")
+        .insert({
+          documento,
+          razao_social: razao,
+          fantasia: texto(empresa.nome_fantasia),
+          email: texto(empresa.email)?.toLowerCase() ?? null,
+          telefone: digitos(empresa.telefone),
+          tipo_inscricao: documento.length === 14 ? 1 : null,
+          status: "ativo",
+        })
+        .select("id")
+        .single();
+      if (error || !novo) throw new Error(`Falha ao criar o cliente: ${error?.message ?? "sem retorno"}`);
+      clienteId = novo.id as string;
+      criado = true;
+    }
+  }
+
+  const agora = new Date().toISOString();
+  const { error } = await supabase.from("conta_azul_conexoes").upsert({
+    cliente_id: clienteId,
+    access_token: t.access_token,
+    refresh_token: t.refresh_token,
+    expira_em: expiraEm(t),
+    empresa_nome: texto(empresa.nome_fantasia) || razao,
+    empresa_documento: documento,
+    conectado_por: usuarioId,
+    conectado_em: agora,
+    atualizado_em: agora,
+    ultimo_erro: null,
+  });
+  if (error) throw new Error(`Falha ao gravar a conexão: ${error.message}`);
+
+  return { clienteId, nome: razao, criado };
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização
+// Sincronizar um cliente: cadastro da empresa + clientes e fornecedores
 
-export type ResultadoSincronizacao =
-  | { ok: true; recebidas: number; inseridas: number; atualizadas: number; reativadas: number; suspensas: number; vinculadas: number; ignorados: number }
-  | { ok: false; status: "recusado" | "erro"; mensagem: string };
+type PessoaCA = {
+  id: string;
+  nome?: string | null;
+  documento?: string | null;
+  email?: string | null;
+  telefone?: string | null;
+  ativo?: boolean | null;
+  tipo_pessoa?: string | null;
+  perfis?: string[] | null;
+};
 
-// Lê a Conta Azul, grava na tabela clientes e registra no log de sincronização.
-export async function sincronizarContaAzul({ origem, forcar = false }: { origem: string; forcar?: boolean }): Promise<ResultadoSincronizacao> {
+// Clientes e fornecedores da empresa. A API filtra um perfil e um tipo de
+// pessoa por vez (o padrão dela é só "Física"), então percorre as combinações.
+async function listarPessoas(clienteId: string) {
+  const token = await accessToken(clienteId);
+  const todas = new Map<string, PessoaCA & { perfisVistos: Set<string> }>();
+  for (const perfil of ["Cliente", "Fornecedor"]) {
+    for (const tipo of ["Jurídica", "Física", "Estrangeira"]) {
+      for (let pagina = 1; pagina <= LIMITE_PAGINAS; pagina++) {
+        const q = new URLSearchParams({
+          pagina: String(pagina),
+          tamanho_pagina: String(TAMANHO_PAGINA),
+          tipo_perfil: perfil,
+          tipos_pessoa: tipo,
+        });
+        const r = await getComToken<{ items?: PessoaCA[] }>(token, `/v1/pessoas?${q}`);
+        const itens = r.items ?? [];
+        for (const p of itens) {
+          if (!p?.id) continue;
+          const atual = todas.get(p.id) ?? { ...p, perfisVistos: new Set<string>() };
+          for (const x of p.perfis ?? []) atual.perfisVistos.add(x);
+          atual.perfisVistos.add(perfil);
+          todas.set(p.id, atual);
+        }
+        if (itens.length < TAMANHO_PAGINA) break;
+      }
+    }
+  }
+  return [...todas.values()];
+}
+
+export type ResultadoCliente = { ok: true; pessoas: number } | { ok: false; erro: string; desconectado: boolean };
+
+export async function sincronizarCliente(clienteId: string): Promise<ResultadoCliente> {
+  const supabase = createAdminClient();
+  const agora = new Date().toISOString();
+  try {
+    // 1) Cadastro da empresa. Campo vazio na Conta Azul não apaga o que já existe.
+    const empresa = await chamarApi<EmpresaCA>(clienteId, "/v1/pessoas/conta-conectada");
+    const atualizar: Record<string, string> = {};
+    const razao = texto(empresa.razao_social);
+    if (razao) atualizar.razao_social = razao;
+    const fantasia = texto(empresa.nome_fantasia);
+    if (fantasia) atualizar.fantasia = fantasia;
+    const email = texto(empresa.email)?.toLowerCase();
+    if (email) atualizar.email = email;
+    const telefone = digitos(empresa.telefone);
+    if (telefone) atualizar.telefone = telefone;
+    atualizar.sincronizado_em = agora;
+    await supabase.from("clientes").update(atualizar).eq("id", clienteId);
+
+    // 2) Clientes e fornecedores: grava os lidos e remove os que sumiram.
+    const pessoas = await listarPessoas(clienteId);
+    const linhas = pessoas
+      .map((p) => ({
+        cliente_id: clienteId,
+        id: p.id,
+        nome: texto(p.nome) ?? "(sem nome)",
+        documento: digitos(p.documento),
+        email: texto(p.email)?.toLowerCase() ?? null,
+        telefone: digitos(p.telefone),
+        tipo_pessoa: texto(p.tipo_pessoa),
+        perfis: [...p.perfisVistos],
+        ativo: p.ativo !== false,
+        atualizado_em: agora,
+      }));
+    for (let i = 0; i < linhas.length; i += LOTE_GRAVACAO) {
+      const { error } = await supabase.from("conta_azul_pessoas").upsert(linhas.slice(i, i + LOTE_GRAVACAO));
+      if (error) throw new Error(`Falha ao gravar clientes e fornecedores: ${error.message}`);
+    }
+    // Quem não foi atualizado agora saiu da Conta Azul da empresa.
+    await supabase.from("conta_azul_pessoas").delete().eq("cliente_id", clienteId).lt("atualizado_em", agora);
+
+    await supabase
+      .from("conta_azul_conexoes")
+      .update({ sincronizado_em: agora, ultimo_erro: null, empresa_nome: fantasia || razao || undefined })
+      .eq("cliente_id", clienteId);
+    return { ok: true, pessoas: linhas.length };
+  } catch (e) {
+    const erro = e instanceof Error ? e.message : "Falha inesperada.";
+    console.error(`Conta Azul: falha ao sincronizar o cliente ${clienteId}`, e);
+    await supabase.from("conta_azul_conexoes").update({ ultimo_erro: erro.slice(0, 1000) }).eq("cliente_id", clienteId);
+    return { ok: false, erro, desconectado: e instanceof ContaAzulDesconectada };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sincronizar todos (rotina diária): do mais desatualizado para o mais novo,
+// até o limite de tempo; o que sobrar fica para a próxima rodada.
+
+export type ResultadoGeral = { conexoes: number; processadas: number; ok: number; falhas: number; pendentes: number };
+
+export async function sincronizarTodos({ origem, limiteMs = 240_000 }: { origem: string; limiteMs?: number }): Promise<ResultadoGeral> {
   const iniciadoEm = new Date();
-  const registrar = (status: "sucesso" | "recusado" | "erro", extra: { mensagem?: string; resultado?: Record<string, unknown>; detalhes?: unknown } = {}) =>
-    registrarExecucao({ integracao: INTEGRACAO_CONTA_AZUL, status, origem, iniciadoEm, forcar, ...extra });
+  const supabase = createAdminClient();
 
   if (!contaAzulConfigurada()) {
-    const mensagem = "Integração não configurada no servidor (CONTA_AZUL_CLIENT_ID e CONTA_AZUL_CLIENT_SECRET).";
-    await registrar("erro", { mensagem });
-    return { ok: false, status: "erro", mensagem };
+    await registrarExecucao({
+      integracao: INTEGRACAO_CONTA_AZUL, status: "erro", origem, iniciadoEm,
+      mensagem: "Integração não configurada no servidor (CONTA_AZUL_CLIENT_ID e CONTA_AZUL_CLIENT_SECRET).",
+    });
+    return { conexoes: 0, processadas: 0, ok: 0, falhas: 0, pendentes: 0 };
   }
 
-  let normalizado: ReturnType<typeof normalizarClientes>;
-  try {
-    normalizado = normalizarClientes(await listarClientesContaAzul());
-  } catch (e) {
-    const mensagem = e instanceof Error ? e.message : "Falha ao ler os clientes da Conta Azul.";
-    console.error("Conta Azul: falha na leitura", e);
-    await registrar("erro", { mensagem });
-    return { ok: false, status: "erro", mensagem };
-  }
+  const { data } = await supabase
+    .from("conta_azul_conexoes")
+    .select("cliente_id, clientes(razao_social)")
+    .order("sincronizado_em", { ascending: true, nullsFirst: true });
+  const conexoes = (data ?? []) as unknown as { cliente_id: string; clientes: { razao_social: string } | null }[];
 
-  const { clientes, ignorados, inativos } = normalizado;
-  if (clientes.length === 0) {
-    const mensagem = "Nenhum cliente ativo com CPF/CNPJ encontrado na Conta Azul. Nada foi alterado.";
-    await registrar("recusado", { mensagem, detalhes: { ignorados: ignorados.slice(0, 50), inativos } });
-    return { ok: false, status: "recusado", mensagem };
+  let ok = 0;
+  let pessoas = 0;
+  const erros: string[] = [];
+  let processadas = 0;
+  for (const c of conexoes) {
+    if (Date.now() - iniciadoEm.getTime() > limiteMs) break;
+    const r = await sincronizarCliente(c.cliente_id);
+    processadas++;
+    if (r.ok) {
+      ok++;
+      pessoas += r.pessoas;
+    } else {
+      erros.push(`${c.clientes?.razao_social ?? c.cliente_id}: ${r.erro}`);
+    }
   }
+  const pendentes = conexoes.length - processadas;
+  const falhas = erros.length;
 
-  const { data, error } = await createAdminClient().rpc("sincronizar_clientes_conta_azul", {
-    p_clientes: clientes,
-    p_forcar: forcar,
+  await registrarExecucao({
+    integracao: INTEGRACAO_CONTA_AZUL,
+    status: conexoes.length === 0 ? "recusado" : falhas && !ok ? "erro" : "sucesso",
+    origem,
+    iniciadoEm,
+    mensagem:
+      conexoes.length === 0
+        ? "Nenhum cliente conectado à Conta Azul."
+        : `${ok} de ${processadas} empresas sincronizadas · ${pessoas} clientes e fornecedores` +
+          (falhas ? ` · ${falhas} com erro` : "") +
+          (pendentes ? ` · ${pendentes} ficaram para a próxima rodada` : ""),
+    resultado: { recebidas: processadas, atualizadas: ok, detalhes: { erros: erros.slice(0, 50) } },
   });
-
-  if (error) {
-    const recusa = error.code === "22023";
-    if (!recusa) console.error("Conta Azul: falha ao gravar", error);
-    const mensagem = recusa ? error.message : `Falha ao gravar no banco: ${error.message}`;
-    await registrar(recusa ? "recusado" : "erro", { mensagem, resultado: { recebidas: clientes.length } });
-    return { ok: false, status: recusa ? "recusado" : "erro", mensagem };
-  }
-
-  const r = data as {
-    recebidas: number; inseridas: number; atualizadas: number; reativadas: number; suspensas: number; vinculadas: number;
-    detalhes: Record<string, string[]>;
-  };
-  await registrar("sucesso", {
-    resultado: { ...r, detalhes: { ...r.detalhes, ignorados: ignorados.slice(0, 50), inativos } },
-  });
-  return {
-    ok: true,
-    recebidas: r.recebidas,
-    inseridas: r.inseridas,
-    atualizadas: r.atualizadas,
-    reativadas: r.reativadas,
-    suspensas: r.suspensas,
-    vinculadas: r.vinculadas,
-    ignorados: ignorados.length,
-  };
+  return { conexoes: conexoes.length, processadas, ok, falhas, pendentes };
 }
 
 // ---------------------------------------------------------------------------
-// Situação da conexão (para a tela; nunca devolve tokens)
+// Tela (nunca devolve tokens)
 
-export type SituacaoConexao = {
-  conectada: boolean;
-  contaNome: string | null;
-  contaDocumento: string | null;
-  conectadoEm: string | null;
-  conectadoPor: string | null;
+export type ConexaoResumo = {
+  clienteId: string;
+  cliente: string;
+  empresa: string | null;
+  documento: string | null;
+  conectadoEm: string;
+  sincronizadoEm: string | null;
+  erro: string | null;
+  pessoas: number;
 };
 
-export async function situacaoConexao(): Promise<SituacaoConexao> {
+export async function listarConexoes(): Promise<ConexaoResumo[]> {
   const supabase = createAdminClient();
   const { data } = await supabase
-    .from("conta_azul_conexao")
-    .select("conta_nome, conta_documento, conectado_em, conectado_por")
-    .eq("id", 1)
-    .maybeSingle();
-  if (!data) return { conectada: false, contaNome: null, contaDocumento: null, conectadoEm: null, conectadoPor: null };
+    .from("conta_azul_conexoes")
+    .select("cliente_id, empresa_nome, empresa_documento, conectado_em, sincronizado_em, ultimo_erro, clientes(razao_social, fantasia)")
+    .order("conectado_em", { ascending: false });
+  const linhas = (data ?? []) as unknown as {
+    cliente_id: string; empresa_nome: string | null; empresa_documento: string | null; conectado_em: string;
+    sincronizado_em: string | null; ultimo_erro: string | null; clientes: { razao_social: string; fantasia: string | null } | null;
+  }[];
 
-  let conectadoPor: string | null = null;
-  if (data.conectado_por) {
-    const { data: p } = await supabase.from("profiles").select("nome").eq("id", data.conectado_por).maybeSingle();
-    conectadoPor = (p?.nome as string | undefined) ?? null;
-  }
-  return {
-    conectada: true,
-    contaNome: (data.conta_nome as string | null) ?? null,
-    contaDocumento: (data.conta_documento as string | null) ?? null,
-    conectadoEm: data.conectado_em as string,
-    conectadoPor,
-  };
+  // Quantidade de clientes e fornecedores lidos de cada empresa.
+  const contagens = await Promise.all(
+    linhas.map(async (l) => {
+      const { count } = await supabase
+        .from("conta_azul_pessoas")
+        .select("id", { count: "exact", head: true })
+        .eq("cliente_id", l.cliente_id);
+      return count ?? 0;
+    }),
+  );
+
+  return linhas.map((l, i) => ({
+    clienteId: l.cliente_id,
+    cliente: l.clientes?.fantasia || l.clientes?.razao_social || "—",
+    empresa: l.empresa_nome,
+    documento: l.empresa_documento,
+    conectadoEm: l.conectado_em,
+    sincronizadoEm: l.sincronizado_em,
+    erro: l.ultimo_erro,
+    pessoas: contagens[i],
+  }));
 }
 
-export async function desconectarContaAzul() {
-  const { error } = await createAdminClient().from("conta_azul_conexao").delete().eq("id", 1);
+export async function desconectarCliente(clienteId: string) {
+  const { error } = await createAdminClient().from("conta_azul_conexoes").delete().eq("cliente_id", clienteId);
   if (error) throw new Error(`Falha ao desconectar: ${error.message}`);
 }

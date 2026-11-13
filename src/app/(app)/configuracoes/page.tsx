@@ -25,7 +25,7 @@ const secoes = [
   {
     href: "/configuracoes/conta-azul",
     titulo: "Conta Azul",
-    descricao: "Conexão com a Conta Azul, a fonte do cadastro de clientes: conectar e sincronizar agora.",
+    descricao: "Conecte a Conta Azul Pro de cada cliente: cadastro da empresa e clientes e fornecedores atualizados todo dia.",
     icone: Link2,
     pronto: true,
   },

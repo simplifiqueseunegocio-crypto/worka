@@ -79,41 +79,46 @@ para reenviar o e-mail (convite expirado ou senha esquecida) e desativar ou reat
   *Authentication → Sign In / Providers → Email*.
 - Cadastre `APP_URL` com o endereço público da plataforma, para os links dos e-mails.
 
-## Integração com a Conta Azul (cadastro de clientes)
+## Integração com a Conta Azul (uma conexão por cliente)
 
-A Conta Azul é a fonte do cadastro de clientes. Todo dia às 23:00 (Vercel Cron,
-`/api/automacoes/conta-azul`) a plataforma lê, pela API v2 da Conta Azul, as pessoas
-com perfil **Cliente** da conta do escritório e sincroniza a tabela `clientes`
-(migration `…_integracao_conta_azul.sql`). Substitui a antiga integração com o Domínio.
+Cada empresa cliente tem a sua **Conta Azul Pro**. O escritório conecta cada uma na plataforma e,
+todo dia às 23:00 (Vercel Cron, `/api/automacoes/conta-azul`), lê da Conta Azul de cada cliente o
+**cadastro da empresa** e os **clientes e fornecedores** dela
+(migrations `…_integracao_conta_azul.sql` e `…_conta_azul_por_cliente.sql`). Substitui a antiga
+integração com o Domínio.
 
-### Configuração
+### Por que um usuário por empresa
 
-1. No [Portal do Desenvolvedor da Conta Azul](https://developers.contaazul.com), no seu app,
-   cadastre a URL de redirecionamento `<APP_URL>/api/integracoes/conta-azul/retorno`
-   (a tela **Configurações → Conta Azul** mostra o endereço exato).
-2. Cadastre `CONTA_AZUL_CLIENT_ID` e `CONTA_AZUL_CLIENT_SECRET` (e `CRON_SECRET`) no `.env` e na Vercel.
-3. Como admin, em **Configurações → Conta Azul**, clique em **Conectar Conta Azul**, entre com a conta
-   do ERP do escritório e autorize. Depois, **Sincronizar agora**.
+A API da Conta Azul autoriza **uma empresa por vez**, com o login de um usuário **da Conta Azul Pro**
+daquela empresa. O acesso de contador da Conta Azul Mais não serve para autorizar a API, e a Conta Azul
+não aceita o mesmo e-mail como usuário em duas contas Pro. Por isso:
 
-Os tokens OAuth ficam na tabela `conta_azul_conexao` (só o servidor acessa). O access token dura
-1 hora e é renovado sozinho; o refresh token muda a cada renovação. Se a autorização expirar ou for
-revogada, a sincronização registra o erro e um admin clica em **Reconectar**.
+1. Em cada Conta Azul Pro (pela Conta Azul Mais), crie um usuário para o escritório em
+   **Configurações → Usuários**, com um e-mail próprio daquela empresa. No Gmail, use apelidos:
+   `integracao+cliente@gmail.com` chega na caixa de `integracao@gmail.com`.
+2. Abra o convite e crie a senha.
+3. Em **Configurações → Conta Azul**, clique em **Adicionar empresa** (de preferência numa janela
+   anônima a cada empresa) e entre com esse usuário.
+
+### Configuração do servidor
+
+- No [Portal do Desenvolvedor da Conta Azul](https://developers.contaazul.com), cadastre no app a URL
+  de redirecionamento `<APP_URL>/api/integracoes/conta-azul/retorno` (a tela mostra o endereço exato).
+- `CONTA_AZUL_CLIENT_ID`, `CONTA_AZUL_CLIENT_SECRET` e `CRON_SECRET` no `.env` e na Vercel.
+- A conexão é feita **pelo site publicado** (o login da Conta Azul volta para a URL cadastrada).
 
 ### Regras
 
-- A chave é o `conta_azul_id` (id da pessoa na Conta Azul). Na **primeira** sincronização, clientes
-  que já existiam (do Domínio ou cadastrados à mão) são **vinculados pelo CNPJ/CPF**, sem duplicar.
-- Só entram pessoas **ativas** com CPF ou CNPJ válido; as demais são listadas no log como ignoradas.
-- Cliente novo entra **ativo** e **sem regime**: defina o regime na plataforma para ele receber obrigações.
-- Cliente que veio da Conta Azul e **não vem mais** (ou foi inativado lá) passa para **suspenso** e perde as
-  **tarefas em aberto** (concluídas e dispensadas ficam); se voltar, é reativado.
-- Status definido pela equipe (suspender/encerrar pela tela) não é alterado pela sincronização.
-- Regime, observações e responsáveis são da plataforma. Campo vazio na Conta Azul não apaga o dado existente.
-- Se vierem menos de 80% dos clientes ativos atuais, a sincronização é recusada, para uma leitura
-  incompleta não suspender a carteira. Use **Forçar** na tela (ou `?forcar=1` na rota) se a queda for real.
-
-Cada execução aparece em **Configurações → Log de sincronização**. O histórico das execuções do
-Domínio continua lá; a coluna `codigo_dominio` fica como referência nos clientes antigos.
+- Conectar uma empresa **cria o cliente** na plataforma, ou vincula ao cliente que já existe com o mesmo
+  CNPJ/CPF. Cliente novo entra **ativo** e **sem regime**: defina o regime para ele receber obrigações.
+- **Reconectar** confere o CNPJ: se o login for de outra empresa, a conexão é recusada.
+- A sincronização atualiza razão social, fantasia, e-mail e telefone (campo vazio na Conta Azul não apaga o
+  que já existe) e regrava os clientes e fornecedores (`conta_azul_pessoas`). Não suspende nem apaga clientes.
+- **Desconectar** só para a atualização; o cliente e os dados já lidos continuam.
+- Tokens em `conta_azul_conexoes` (só o servidor acessa). O access token dura 1 hora e é renovado sozinho;
+  o refresh token muda a cada renovação. Se a autorização expirar, o erro aparece na linha do cliente e no log.
+- A rotina processa do cliente mais desatualizado para o mais novo até o limite de tempo; o que sobrar fica
+  para a rodada seguinte. Resumo de cada rodada em **Configurações → Log de sincronização**.
 
 ## Certidões (CND)
 

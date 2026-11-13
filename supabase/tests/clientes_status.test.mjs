@@ -44,7 +44,10 @@ check("com status manual, a equipe troca de suspenso para encerrado", (await sta
 
 // Exclusão
 const excluir = (id) => db.query(`delete from public.clientes where id = '${id}'`);
-check("ainda no Domínio: exclusão bloqueada", (await as(ADMIN, () => erro(() => excluir(A)))) !== null);
+// Integração do Domínio desligada (20261114000000): nenhum cliente "ainda vem"
+// de uma sincronização que o recriaria; excluir depende só do status.
+check("Domínio desligado: cliente_no_dominio é sempre falso",
+  (await db.query(`select public.cliente_no_dominio('${A}') as v`)).rows[0].v === false);
 check("cliente ativo: exclusão bloqueada", (await as(ADMIN, () => erro(() => excluir(M)))) !== null);
 await as(GESTOR, () => excluir(B));
 check("gestor não exclui", (await status(B)) === "suspenso");

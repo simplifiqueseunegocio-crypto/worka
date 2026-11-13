@@ -2,41 +2,43 @@
 
 import { revalidatePath } from "next/cache";
 import { getUsuario } from "@/lib/auth";
-import { desconectarContaAzul, sincronizarContaAzul } from "@/lib/integracoes/conta-azul";
+import { desconectarCliente, sincronizarCliente, sincronizarTodos } from "@/lib/integracoes/conta-azul";
 
 export type EstadoContaAzul = { ok?: string; erro?: string };
 
-const plural = (n: number, um: string, varios: string) => `${n.toLocaleString("pt-BR")} ${n === 1 ? um : varios}`;
-
-// "Sincronizar agora" (admin). forcar: aceita uma queda grande na carteira.
-export async function sincronizarAgora(forcar = false): Promise<EstadoContaAzul> {
+async function exigirAdmin() {
   const usuario = await getUsuario();
-  if (usuario.papel !== "admin" || !usuario.ativo) return { erro: "Apenas administradores podem sincronizar." };
-
-  const r = await sincronizarContaAzul({ origem: `manual: ${usuario.email || usuario.nome}`, forcar });
-  revalidatePath("/configuracoes/conta-azul");
-  revalidatePath("/clientes");
-  if (!r.ok) return { erro: r.mensagem };
-
-  const partes = [
-    plural(r.recebidas, "cliente recebido", "clientes recebidos"),
-    `${r.inseridas} novos`,
-    r.vinculadas ? `${r.vinculadas} vinculados pelo CNPJ` : null,
-    r.reativadas ? `${r.reativadas} reativados` : null,
-    `${r.suspensas} suspensos`,
-    r.ignorados ? `${r.ignorados} sem CPF/CNPJ válido (ignorados)` : null,
-  ].filter(Boolean);
-  return { ok: `Sincronizado: ${partes.join(" · ")}.` };
+  return usuario.papel === "admin" && usuario.ativo ? usuario : null;
 }
 
-export async function desconectar(): Promise<EstadoContaAzul> {
-  const usuario = await getUsuario();
-  if (usuario.papel !== "admin" || !usuario.ativo) return { erro: "Apenas administradores podem desconectar." };
+// Sincroniza um cliente agora.
+export async function sincronizarClienteAgora(clienteId: string): Promise<EstadoContaAzul> {
+  if (!(await exigirAdmin())) return { erro: "Apenas administradores podem sincronizar." };
+  const r = await sincronizarCliente(clienteId);
+  revalidatePath("/configuracoes/conta-azul");
+  return r.ok ? { ok: `Sincronizado: ${r.pessoas} clientes e fornecedores.` } : { erro: r.erro };
+}
+
+// Sincroniza todos os clientes conectados (o mesmo que a rotina das 23:00).
+export async function sincronizarTodosAgora(): Promise<EstadoContaAzul> {
+  const usuario = await exigirAdmin();
+  if (!usuario) return { erro: "Apenas administradores podem sincronizar." };
+  const r = await sincronizarTodos({ origem: `manual: ${usuario.email || usuario.nome}`, limiteMs: 50_000 });
+  revalidatePath("/configuracoes/conta-azul");
+  if (r.conexoes === 0) return { erro: "Nenhum cliente conectado ainda." };
+  const partes = [`${r.ok} de ${r.processadas} empresas sincronizadas`];
+  if (r.falhas) partes.push(`${r.falhas} com erro (veja a lista)`);
+  if (r.pendentes) partes.push(`${r.pendentes} ficam para a rotina das 23:00`);
+  return r.falhas && !r.ok ? { erro: partes.join(" · ") } : { ok: `${partes.join(" · ")}.` };
+}
+
+export async function desconectarClienteAgora(clienteId: string): Promise<EstadoContaAzul> {
+  if (!(await exigirAdmin())) return { erro: "Apenas administradores podem desconectar." };
   try {
-    await desconectarContaAzul();
+    await desconectarCliente(clienteId);
   } catch (e) {
     return { erro: e instanceof Error ? e.message : "Falha ao desconectar." };
   }
   revalidatePath("/configuracoes/conta-azul");
-  return { ok: "Conta Azul desconectada. A sincronização diária fica parada até conectar de novo." };
+  return { ok: "Desconectado. O cliente continua na plataforma; só para de ser atualizado." };
 }

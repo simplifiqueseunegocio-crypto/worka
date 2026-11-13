@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { AlertCircle, ArrowLeft, CheckCircle2, ExternalLink, Link2, Lock, PlugZap, XCircle } from "lucide-react";
+import { AlertCircle, ArrowLeft, CheckCircle2, Info, Lock, Plus, XCircle } from "lucide-react";
 import { getUsuario } from "@/lib/auth";
-import { contaAzulConfigurada, situacaoConexao, urlRetorno } from "@/lib/integracoes/conta-azul";
-import { AcoesContaAzul } from "@/components/conta-azul/acoes-conta-azul";
+import { contaAzulConfigurada, listarConexoes, urlRetorno, type ConexaoResumo } from "@/lib/integracoes/conta-azul";
+import { formatarDocumento } from "@/lib/formatar";
+import { AcoesCliente, SincronizarTodos } from "@/components/conta-azul/acoes-conta-azul";
 import { Esqueleto, Revelar, TransicaoPagina } from "@/components/ui/transicao";
 
 export const metadata: Metadata = { title: "Conta Azul" };
@@ -24,8 +25,8 @@ export default function PaginaContaAzul({ searchParams }: PageProps<"/configurac
         <p className="mt-4 text-xs font-semibold tracking-[0.2em] text-texto-suave">INTEGRAÇÃO</p>
         <h1 className="mt-3 font-display text-3xl leading-[1.1] text-texto sm:text-[2.5rem]">Conta Azul</h1>
         <p className="mt-3 max-w-2xl text-texto-suave">
-          A Conta Azul é a fonte do cadastro de clientes: todo dia às 23:00 a plataforma lê os clientes ativos da conta
-          do escritório, cadastra os novos, atualiza os dados e suspende quem saiu.
+          Cada cliente tem a sua Conta Azul Pro. Conecte uma empresa e ela entra como cliente na plataforma; todo dia às
+          23:00 o cadastro e os clientes e fornecedores dela são atualizados.
         </p>
 
         <Suspense
@@ -56,67 +57,92 @@ async function Conteudo({ searchParams }: { searchParams: PageProps<"/configurac
   }
 
   const params = await searchParams;
-  const erro = typeof params.erro === "string" ? params.erro.slice(0, 400) : null;
-  const conectadoAgora = params.conectado === "1";
+  const erro = typeof params.erro === "string" ? params.erro.slice(0, 500) : null;
+  const conectado = typeof params.conectado === "string" ? params.conectado.slice(0, 200) : null;
+  const novo = params.novo === "1";
   const configurada = contaAzulConfigurada();
-  const s = await situacaoConexao();
+  const conexoes = configurada ? await listarConexoes() : [];
   const retorno = urlRetorno(process.env.APP_URL?.replace(/\/+$/, "") || "https://SEU-ENDERECO");
 
   return (
-    <div className="entrada mt-8 flex max-w-3xl flex-col gap-4">
+    <div className="entrada mt-8 flex flex-col gap-4">
       {erro && (
-        <p role="alert" className="flex items-start gap-2 rounded-bloco bg-perigo-suave px-4 py-3 text-sm font-medium text-perigo">
+        <p role="alert" className="flex max-w-4xl items-start gap-2 rounded-bloco bg-perigo-suave px-4 py-3 text-sm font-medium text-perigo">
           <AlertCircle className="mt-0.5 size-4 shrink-0" /> {erro}
         </p>
       )}
-      {conectadoAgora && (
-        <p role="status" className="flex items-start gap-2 rounded-bloco bg-sucesso-suave px-4 py-3 text-sm font-medium text-sucesso">
-          <CheckCircle2 className="mt-0.5 size-4 shrink-0" /> Conta Azul conectada. Rode a primeira sincronização abaixo.
+      {conectado && (
+        <p role="status" className="flex max-w-4xl items-start gap-2 rounded-bloco bg-sucesso-suave px-4 py-3 text-sm font-medium text-sucesso">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          {conectado} conectada{novo ? " e cadastrada como cliente" : " ao cliente que já existia"}. A primeira leitura já foi feita.
         </p>
       )}
 
-      <section className="rounded-card bg-superficie p-6 ring-1 ring-borda">
+      <section className="rounded-card bg-superficie p-4 ring-1 ring-borda sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span
-              className={`grid size-11 place-items-center rounded-xl ${s.conectada ? "bg-sucesso-suave text-sucesso" : "bg-suave text-texto-suave"}`}
-            >
-              {s.conectada ? <Link2 className="size-5" /> : <PlugZap className="size-5" />}
-            </span>
-            <div>
-              <h2 className="text-lg font-bold text-texto">{s.conectada ? "Conectada" : "Não conectada"}</h2>
-              <p className="text-sm text-texto-suave">
-                {s.conectada
-                  ? [s.contaNome, s.conectadoEm && `desde ${dataHora.format(new Date(s.conectadoEm))}`, s.conectadoPor && `por ${s.conectadoPor}`]
-                      .filter(Boolean)
-                      .join(" · ")
-                  : "Conecte a conta Conta Azul do escritório para trazer os clientes."}
-              </p>
-            </div>
+          <div>
+            <h2 className="text-lg font-bold text-texto">Empresas conectadas</h2>
+            <p className="text-sm text-texto-suave">
+              {conexoes.length ? `${conexoes.length} ${conexoes.length === 1 ? "empresa" : "empresas"}` : "Nenhuma empresa conectada ainda."}
+            </p>
           </div>
-          {configurada && (
-            // Link comum (não <Link>): a rota redireciona para o login da Conta Azul.
-            <a
-              href="/api/integracoes/conta-azul/conectar"
-              className={`flex h-11 items-center gap-2 rounded-full px-5 text-sm font-bold transition-colors ${
-                s.conectada
-                  ? "text-texto ring-1 ring-borda hover:bg-suave"
-                  : "bg-primaria text-sobre-primaria hover:bg-primaria-hover"
-              }`}
-            >
-              <ExternalLink className="size-4" /> {s.conectada ? "Reconectar" : "Conectar Conta Azul"}
-            </a>
-          )}
+          <div className="flex flex-wrap items-start gap-3">
+            {conexoes.length > 0 && <SincronizarTodos />}
+            {configurada && (
+              // Link comum (não <Link>): a rota redireciona para o login da Conta Azul.
+              <a
+                href="/api/integracoes/conta-azul/conectar"
+                className="flex h-10 items-center gap-2 rounded-full bg-primaria px-5 text-sm font-bold text-sobre-primaria transition-colors hover:bg-primaria-hover"
+              >
+                <Plus className="size-4" /> Adicionar empresa
+              </a>
+            )}
+          </div>
         </div>
 
-        {s.conectada && (
-          <div className="mt-6 border-t border-borda pt-5">
-            <AcoesContaAzul />
+        {conexoes.length > 0 && (
+          <div className="-mx-4 mt-5 overflow-x-auto sm:-mx-6">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead>
+                <tr className="text-[11px] font-semibold tracking-[0.12em] text-texto-suave uppercase">
+                  <th className="px-4 py-2 font-semibold sm:px-6">Cliente</th>
+                  <th className="px-3 py-2 font-semibold">Clientes e fornecedores</th>
+                  <th className="px-3 py-2 font-semibold">Última leitura</th>
+                  <th className="px-4 py-2 text-right font-semibold sm:px-6">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conexoes.map((c) => (
+                  <Linha key={c.clienteId} c={c} />
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
 
-      <section className="rounded-card bg-superficie p-6 ring-1 ring-borda">
+      <section className="max-w-4xl rounded-card bg-superficie p-6 ring-1 ring-borda">
+        <h2 className="flex items-center gap-2 text-lg font-bold text-texto">
+          <Info className="size-5 text-destaque" /> Como conectar uma empresa
+        </h2>
+        <ol className="mt-3 flex list-decimal flex-col gap-2 pl-5 text-sm text-texto-suave">
+          <li>
+            Na Conta Azul Pro do cliente (pela Conta Azul Mais), crie um <strong className="text-texto">usuário para o escritório</strong>{" "}
+            em Configurações → Usuários. A Conta Azul não aceita o mesmo e-mail em duas empresas: use um por cliente, por
+            exemplo <code className="rounded bg-suave px-1 text-texto">integracao+nomedocliente@gmail.com</code> (no Gmail, tudo
+            chega na mesma caixa).
+          </li>
+          <li>Abra o convite que chega nesse e-mail e crie a senha.</li>
+          <li>
+            Aqui, clique em <strong className="text-texto">Adicionar empresa</strong> e entre com esse usuário.{" "}
+            <strong className="text-texto">Use uma janela anônima</strong> a cada empresa, para a Conta Azul não reaproveitar o
+            login da anterior.
+          </li>
+          <li>A empresa vira cliente da plataforma (ou é vinculada ao cliente com o mesmo CNPJ) e a primeira leitura é feita na hora.</li>
+        </ol>
+      </section>
+
+      <section className="max-w-4xl rounded-card bg-superficie p-6 ring-1 ring-borda">
         <h2 className="text-lg font-bold text-texto">Configuração do servidor</h2>
         <ul className="mt-3 divide-y divide-borda text-sm">
           {(
@@ -141,7 +167,7 @@ async function Conteudo({ searchParams }: { searchParams: PageProps<"/configurac
           <code className="mt-2 block break-all rounded bg-suave px-2 py-1.5 text-texto">{retorno}</code>
         </div>
         <p className="mt-4 text-xs text-texto-suave">
-          O histórico de cada sincronização fica em{" "}
+          O resumo de cada rodada fica em{" "}
           <Link href="/configuracoes/sincronizacao" className="font-semibold text-destaque hover:underline">
             Log de sincronização
           </Link>
@@ -149,5 +175,33 @@ async function Conteudo({ searchParams }: { searchParams: PageProps<"/configurac
         </p>
       </section>
     </div>
+  );
+}
+
+function Linha({ c }: { c: ConexaoResumo }) {
+  return (
+    <tr className="border-t border-borda align-top">
+      <td className="px-4 py-3 sm:px-6">
+        <Link href={`/clientes/${c.clienteId}`} className="font-semibold text-texto hover:text-destaque hover:underline">
+          {c.cliente}
+        </Link>
+        <span className="block text-xs text-texto-suave">
+          {[c.empresa !== c.cliente ? c.empresa : null, c.documento ? formatarDocumento(c.documento) : null].filter(Boolean).join(" · ")}
+        </span>
+        {c.erro && (
+          <span className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-perigo">
+            <AlertCircle className="mt-0.5 size-3.5 shrink-0" /> {c.erro}
+          </span>
+        )}
+      </td>
+      <td className="px-3 py-3 tabular-nums text-texto">{c.pessoas.toLocaleString("pt-BR")}</td>
+      <td className="px-3 py-3 text-texto-suave tabular-nums">
+        {c.sincronizadoEm ? dataHora.format(new Date(c.sincronizadoEm)) : "Ainda não"}
+        <span className="block text-xs">conectada em {dataHora.format(new Date(c.conectadoEm))}</span>
+      </td>
+      <td className="px-4 py-3 sm:px-6">
+        <AcoesCliente clienteId={c.clienteId} nome={c.cliente} />
+      </td>
+    </tr>
   );
 }

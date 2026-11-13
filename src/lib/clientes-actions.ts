@@ -10,9 +10,9 @@ export type EstadoCliente = { ok?: string; erro?: string };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUS: StatusCliente[] = ["ativo", "suspenso", "encerrado"];
 const confirmacoes: Record<StatusCliente, string> = {
-  ativo: "Cliente reativado. A sincronização com a Conta Azul volta a atualizar o status.",
-  suspenso: "Cliente suspenso. A sincronização com a Conta Azul não o reativa.",
-  encerrado: "Cliente encerrado. A sincronização com a Conta Azul não o reativa.",
+  ativo: "Cliente reativado.",
+  suspenso: "Cliente suspenso.",
+  encerrado: "Cliente encerrado.",
 };
 
 // Suspender, encerrar ou reativar (admin e gestor; RLS "edicao" em clientes).
@@ -34,8 +34,8 @@ export async function alterarStatusCliente(id: string, status: StatusCliente): P
   return { ok: confirmacoes[status] };
 }
 
-// Exclui o cliente e tudo dele (só admin; o banco recusa cliente ativo ou que
-// ainda vem da Conta Azul). Os PDFs das certidões saem do Storage em seguida.
+// Exclui o cliente e tudo dele (só admin; o banco recusa cliente ativo).
+// Os PDFs das certidões saem do Storage em seguida.
 export async function excluirCliente(id: string): Promise<EstadoCliente> {
   if (!UUID.test(id)) return { erro: "Cliente inválido." };
   const supabase = await createClient();

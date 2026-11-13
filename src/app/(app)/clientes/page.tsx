@@ -30,7 +30,7 @@ export default function Clientes({ searchParams }: PageProps<"/clientes">) {
           </div>
           <p className="flex items-center gap-2 rounded-full bg-superficie px-4 py-2 text-xs font-medium text-texto-suave ring-1 ring-borda">
             <RefreshCw className="size-3.5" />
-            Sincronizado com a Conta Azul
+            Empresas conectadas pela Conta Azul
           </p>
         </div>
 

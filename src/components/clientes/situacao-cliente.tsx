@@ -65,11 +65,11 @@ export function SituacaoCliente({
   const origem =
     status === "ativo"
       ? doDominio
-        ? "Atualizado todo dia pela sincronização com a Conta Azul."
+        ? "Cadastro trazido da antiga integração com o Domínio."
         : "Cadastrado na plataforma."
       : statusManual
-        ? "Definido pela equipe: a sincronização com a Conta Azul não reativa."
-        : "Suspenso pela sincronização: saiu da lista de clientes ativos da Conta Azul.";
+        ? "Definido pela equipe."
+        : "Suspenso pela antiga sincronização com o Domínio.";
 
   return (
     <div className="mt-4">
